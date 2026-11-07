@@ -1,0 +1,60 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomId": {
+        "players": {
+          ".read": "auth != null",
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.hasChildren(['name', 'color', 'style', 'gender', 'x', 'z', 'rotation', 'sitting'])",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 18"
+            },
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)"
+            },
+            "style": {
+              ".validate": "newData.val() === 'hiker' || newData.val() === 'spirit' || newData.val() === 'stargazer'"
+            },
+            "gender": {
+              ".validate": "newData.val() === 'female' || newData.val() === 'male'"
+            },
+            "x": {
+              ".validate": "newData.isNumber() && newData.val() >= -88 && newData.val() <= 88"
+            },
+            "z": {
+              ".validate": "newData.isNumber() && newData.val() >= -88 && newData.val() <= 88"
+            },
+            "rotation": {
+              ".validate": "newData.isNumber()"
+            },
+            "sitting": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+        "chat": {
+          ".read": "auth != null",
+          "$messageId": {
+            ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid",
+            ".validate": "newData.hasChildren(['uid', 'name', 'text', 'createdAt'])",
+            "uid": {
+              ".validate": "newData.isString() && newData.val() === auth.uid"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 18"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 180"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

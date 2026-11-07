@@ -20,6 +20,11 @@ button { color: inherit; }
 
 #objective-panel { position: absolute; top: 6.5rem; left: 1.5rem; width: min(280px, calc(100vw - 3rem)); padding: .9rem 1rem; color: var(--cream); }
 .objective-heading { display: flex; align-items: center; gap: .5rem; color: #ffd39b; font-size: .7rem; font-weight: 700; letter-spacing: .12em; }
+.multiplayer-status { display: flex; align-items: center; gap: .4rem; margin: .45rem 0 0; color: rgba(255,255,255,.72); font-size: .68rem; }
+.multiplayer-status-dot { width: .48rem; height: .48rem; flex: 0 0 auto; border-radius: 50%; background: #e6b45e; box-shadow: 0 0 8px currentColor; }
+.multiplayer-status[data-state="connected"] .multiplayer-status-dot { background: #78d6a1; }
+.multiplayer-status[data-state="error"] .multiplayer-status-dot,
+.multiplayer-status[data-state="disconnected"] .multiplayer-status-dot { background: #f27b72; }
 #objective-text { font-size: .85rem; line-height: 1.45; margin: .55rem 0 .65rem; color: rgba(255,255,255,.9); }
 .progress-track { height: 5px; background: rgba(255,255,255,.18); border-radius: 10px; overflow: hidden; margin-bottom: .4rem; }
 #progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, #f8bb72, #e78b62); border-radius: inherit; transition: width .4s ease; }

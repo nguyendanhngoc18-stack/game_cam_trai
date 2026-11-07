@@ -108,6 +108,10 @@
                     <h1 class="text-lg md:text-2xl font-bold text-amber-200 drop-shadow-md">Rừng Nhỏ</h1>
                 </div>
                 <p id="player-label" class="text-xs md:text-sm text-white/80 mt-1">WASD để đi · E: Tương tác · K: Ngồi nghỉ · P: Chụp ảnh</p>
+                <p id="multiplayer-status" data-state="offline" class="multiplayer-status" role="status" aria-live="polite">
+                    <span class="multiplayer-status-dot"></span>
+                    <span id="multiplayer-status-text">Chơi một mình · Firebase chưa cấu hình</span>
+                </p>
             </div>
             
             <div class="flex flex-wrap gap-2 pointer-events-auto">
@@ -146,8 +150,8 @@
         <div class="flex flex-col justify-end items-start mt-auto">
             <div id="chat-container" class="glass p-3">
                 <div class="text-[11px] text-amber-200/90 font-semibold mb-1 flex items-center justify-between">
-                    <span>📖 Nhật Ký Lữ Hành</span>
-                    <span class="text-white/50 text-[10px]">Tự động lưu</span>
+                    <span id="chat-title">📖 Nhật Ký Lữ Hành</span>
+                    <span id="chat-mode-label" class="text-white/50 text-[10px]">Lưu trên máy này</span>
                 </div>
                 <div id="chat-messages">
                     <!-- Messages will appear here -->

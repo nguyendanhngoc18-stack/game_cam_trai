@@ -1,3 +1,5 @@
+import { createFirebaseMultiplayer } from "./firebase-multiplayer.js";
+
 // ============================================================================
 // RỪNG NHỎ — KHU TRẠI CHỮA LÀNH (3D ANIME EXPLORATION & SIGHTSEEING)
 // Phong cách: Cel-Shading, Anime Genshin 1/10, Thư Giãn, Chụp Ảnh & Ngắm Cảnh
@@ -7,6 +9,8 @@ const PROFILE_KEY = "rung-nho-profile-v1";
 const CHAT_KEY = "rung-nho-chat-v1";
 const DISCOVERY_KEY = "rung-nho-discoveries-v1";
 const CHARACTER_FOOT_OFFSET = 0.69;
+const PLAYER_COLLISION_RADIUS = 0.48;
+const PLAYER_MODEL_FACING_OFFSET = Math.PI;
 const defaultCharacter = { name: "Lá Nhỏ", color: "#e78b62", style: "hiker", gender: "female" };
 
 function readStorage(key, fallback) {
@@ -1450,30 +1454,31 @@ function animateCharacter(delta, time, moving) {
                 }
                 if (b.head) b.head.rotation.x = THREE.MathUtils.damp(b.head.rotation.x, -0.2 + Math.sin(time) * 0.02, 5, delta);
             } else if (moving) {
-                // Di chuyển nhún nhảy & vung tay chân tự nhiên
-                walkTime += delta * 10.5;
+                walkTime += delta * 9.2;
                 const stride = Math.sin(walkTime);
+                if (b.hips) b.hips.position.y = THREE.MathUtils.damp(b.hips.position.y, initHipsY + Math.abs(stride) * 0.035, 12, delta);
+                if (b.leftLeg) b.leftLeg.rotation.x = THREE.MathUtils.damp(b.leftLeg.rotation.x, stride * 0.48, 14, delta);
+                if (b.rightLeg) b.rightLeg.rotation.x = THREE.MathUtils.damp(b.rightLeg.rotation.x, -stride * 0.48, 14, delta);
+                if (b.leftLowerLeg) b.leftLowerLeg.rotation.x = THREE.MathUtils.damp(b.leftLowerLeg.rotation.x, Math.max(0, -stride * 0.42), 14, delta);
+                if (b.rightLowerLeg) b.rightLowerLeg.rotation.x = THREE.MathUtils.damp(b.rightLowerLeg.rotation.x, Math.max(0, stride * 0.42), 14, delta);
 
-                if (b.hips) b.hips.position.y = THREE.MathUtils.damp(b.hips.position.y, initHipsY + Math.abs(stride) * 0.04, 10, delta);
-                
-                // Bước chân và gập đầu gối
-                if (b.leftLeg) b.leftLeg.rotation.x = stride * 0.65;
-                if (b.rightLeg) b.rightLeg.rotation.x = -stride * 0.65;
-                if (b.leftLowerLeg) b.leftLowerLeg.rotation.x = Math.max(0, -stride * 0.55);
-                if (b.rightLowerLeg) b.rightLowerLeg.rotation.x = Math.max(0, stride * 0.55);
-
-                // Cánh tay buông xuôi tự nhiên (~76 độ) và vung theo nhịp đi
                 if (b.leftArm) {
-                    b.leftArm.rotation.z = 1.32;
-                    b.leftArm.rotation.x = -stride * 0.45;
-                    b.leftArm.rotation.y = 0.08;
+                    b.leftArm.rotation.z = THREE.MathUtils.damp(b.leftArm.rotation.z, 1.22, 10, delta);
+                    b.leftArm.rotation.x = THREE.MathUtils.damp(b.leftArm.rotation.x, -stride * 0.32, 12, delta);
+                    b.leftArm.rotation.y = THREE.MathUtils.damp(b.leftArm.rotation.y, 0.08, 10, delta);
                 }
                 if (b.rightArm) {
-                    b.rightArm.rotation.z = -1.32;
-                    b.rightArm.rotation.x = stride * 0.45;
-                    b.rightArm.rotation.y = -0.08;
+                    b.rightArm.rotation.z = THREE.MathUtils.damp(b.rightArm.rotation.z, -1.22, 10, delta);
+                    b.rightArm.rotation.x = THREE.MathUtils.damp(b.rightArm.rotation.x, stride * 0.32, 12, delta);
+                    b.rightArm.rotation.y = THREE.MathUtils.damp(b.rightArm.rotation.y, -0.08, 10, delta);
                 }
-                if (b.head) b.head.rotation.y = Math.sin(time * 1.5) * 0.04;
+                if (b.spine) {
+                    b.spine.rotation.z = THREE.MathUtils.damp(b.spine.rotation.z, Math.sin(walkTime) * 0.025, 10, delta);
+                }
+                if (b.head) {
+                    b.head.rotation.y = THREE.MathUtils.damp(b.head.rotation.y, Math.sin(time * 1.5) * 0.035, 8, delta);
+                    b.head.rotation.x = THREE.MathUtils.damp(b.head.rotation.x, Math.cos(walkTime * 2) * 0.018, 8, delta);
+                }
             } else {
                 // Đứng yên thở nhẹ nhàng, tay buông xuôi tự nhiên bên hông
                 if (b.hips) b.hips.position.y = THREE.MathUtils.damp(b.hips.position.y, initHipsY + Math.sin(time * 2.2) * 0.012, 6, delta);
@@ -1502,12 +1507,12 @@ function animateCharacter(delta, time, moving) {
             if (isSitting) {
                 ud.model.position.y = THREE.MathUtils.damp(ud.model.position.y, -0.4, 8, delta);
             } else if (moving) {
-                walkTime += delta * 11.0;
-                ud.model.position.y = Math.abs(Math.sin(walkTime)) * 0.08;
-                ud.model.rotation.z = Math.cos(walkTime) * 0.04;
+                walkTime += delta * 9.2;
+                ud.model.position.y = THREE.MathUtils.damp(ud.model.position.y, Math.abs(Math.sin(walkTime)) * 0.035, 10, delta);
+                ud.model.rotation.z = THREE.MathUtils.damp(ud.model.rotation.z, Math.cos(walkTime) * 0.018, 8, delta);
             } else {
-                ud.model.position.y = Math.sin(time * 2.2) * 0.02;
-                ud.model.rotation.z = 0;
+                ud.model.position.y = THREE.MathUtils.damp(ud.model.position.y, Math.sin(time * 2.2) * 0.012, 6, delta);
+                ud.model.rotation.z = THREE.MathUtils.damp(ud.model.rotation.z, 0, 6, delta);
             }
         }
 
@@ -1564,24 +1569,28 @@ function animateCharacter(delta, time, moving) {
     const previousStep = Math.floor(walkTime / Math.PI);
 
     if (moving) {
-        walkTime += delta * 11.0;
+        walkTime += delta * 9.2;
         const stride = Math.sin(walkTime);
 
         legs.forEach((leg, index) => {
-            leg.position.z = 0;
-            leg.rotation.x = stride * 0.72 * (index === 0 ? 1 : -1);
+            leg.position.z = THREE.MathUtils.damp(leg.position.z, 0, 12, delta);
+            leg.rotation.x = THREE.MathUtils.damp(leg.rotation.x, stride * 0.56 * (index === 0 ? 1 : -1), 14, delta);
         });
 
         arms.forEach((arm, index) => {
-            arm.rotation.x = stride * 0.52 * (index === 0 ? -1 : 1);
-            arm.rotation.z = (index === 0 ? -1 : 1) * (0.12 + Math.max(0, stride * (index === 0 ? 1 : -1)) * 0.16);
+            arm.rotation.x = THREE.MathUtils.damp(arm.rotation.x, stride * 0.42 * (index === 0 ? -1 : 1), 12, delta);
+            arm.rotation.z = THREE.MathUtils.damp(
+                arm.rotation.z,
+                (index === 0 ? -1 : 1) * (0.1 + Math.max(0, stride * (index === 0 ? 1 : -1)) * 0.12),
+                10,
+                delta
+            );
         });
 
-        // Nhún nhảy anime
-        bodyRig.position.y = 1.05 + Math.abs(stride) * 0.075;
-        bodyRig.rotation.z = Math.cos(walkTime) * 0.045;
-        headRig.rotation.x = Math.sin(walkTime) * 0.04;
-        headRig.rotation.y = Math.sin(time * 1.2) * 0.04;
+        bodyRig.position.y = THREE.MathUtils.damp(bodyRig.position.y, 1.05 + Math.abs(stride) * 0.055, 12, delta);
+        bodyRig.rotation.z = THREE.MathUtils.damp(bodyRig.rotation.z, Math.cos(walkTime) * 0.03, 10, delta);
+        headRig.rotation.x = THREE.MathUtils.damp(headRig.rotation.x, Math.sin(walkTime) * 0.025, 8, delta);
+        headRig.rotation.y = THREE.MathUtils.damp(headRig.rotation.y, Math.sin(time * 1.2) * 0.035, 8, delta);
 
         // Cọng tóc ngố và khăn quàng đung đưa theo bước chạy
         if (ahogeRig) ahogeRig.rotation.z = 0.6 + Math.sin(walkTime * 2) * 0.22;
@@ -1978,6 +1987,297 @@ function makeMarker(id, x, z, title, description) {
 }
 
 // ============================================================================
+// IMPORTED FOREST ASSETS
+// ============================================================================
+const forestTreeLocations = [];
+
+function loadForestPack(url) {
+    return new Promise((resolve, reject) => {
+        gltfLoader.load(url, gltf => resolve(gltf.scene), undefined, reject);
+    });
+}
+
+function createForestPrototypes(root, matcher, heightRange) {
+    const sources = [];
+    root.updateMatrixWorld(true);
+    root.traverse(object => {
+        if (object.isMesh || !matcher.test(object.name)) return;
+        let hasMesh = false;
+        object.traverse(child => {
+            if (child.isMesh) hasMesh = true;
+        });
+        if (hasMesh) sources.push(object);
+    });
+
+    return sources.map(source => {
+        const parts = [];
+        source.traverse(object => {
+            if (!object.isMesh) return;
+            const geometry = object.geometry.clone();
+            geometry.applyMatrix4(object.matrixWorld);
+            parts.push({ geometry, material: object.material });
+        });
+
+        const bounds = new THREE.Box3();
+        parts.forEach(part => {
+            part.geometry.computeBoundingBox();
+            bounds.union(part.geometry.boundingBox);
+        });
+        const size = bounds.getSize(new THREE.Vector3());
+        if (bounds.isEmpty() || size.y < 0.001) {
+            parts.forEach(part => part.geometry.dispose());
+            return null;
+        }
+
+        const center = bounds.getCenter(new THREE.Vector3());
+        const scale = THREE.MathUtils.lerp(heightRange[0], heightRange[1], Math.random()) / size.y;
+        parts.forEach(part => {
+            part.geometry.translate(-center.x, -bounds.min.y, -center.z);
+            part.geometry.scale(scale, scale, scale);
+            part.geometry.computeBoundingSphere();
+        });
+        return {
+            parts,
+            collisionRadius: Math.max(0.65, Math.min(1.8, Math.max(size.x, size.z) * scale * 0.16))
+        };
+    }).filter(Boolean);
+}
+
+function createForestInstances(prototypes, placements, castShadow = false) {
+    const placementGroups = prototypes.map(() => []);
+    placements.forEach(placement => {
+        const index = Number.isInteger(placement.prototypeIndex)
+            ? placement.prototypeIndex
+            : Math.floor(Math.random() * prototypes.length);
+        placementGroups[index].push(placement);
+    });
+
+    placementGroups.forEach((group, prototypeIndex) => {
+        if (!group.length) return;
+        const prototype = prototypes[prototypeIndex];
+        prototype.parts.forEach(part => {
+            const instances = new THREE.InstancedMesh(part.geometry, part.material, group.length);
+            instances.castShadow = castShadow;
+            instances.receiveShadow = false;
+            instances.frustumCulled = false;
+            const dummy = new THREE.Object3D();
+            group.forEach((placement, index) => {
+                dummy.position.set(placement.x, terrainHeight(placement.x, placement.z), placement.z);
+                dummy.rotation.set(0, placement.rotation, 0);
+                dummy.scale.setScalar(placement.scale);
+                dummy.updateMatrix();
+                instances.setMatrixAt(index, dummy.matrix);
+            });
+            instances.instanceMatrix.needsUpdate = true;
+            scene.add(instances);
+        });
+    });
+}
+
+function scatterForestAssets(prototypes, count, options = {}) {
+    if (!prototypes.length || count <= 0) return [];
+    const placements = [];
+    const minRadius = options.minRadius ?? 20;
+    const maxRadius = options.maxRadius ?? 80;
+    const clusterRadius = options.clusterRadius || 0;
+    const minSpacing = options.minSpacing || 0;
+    const spacingCells = new Map();
+    let attempts = 0;
+
+    while (placements.length < count && attempts < count * 30) {
+        attempts++;
+        let x;
+        let z;
+        if (clusterRadius && forestTreeLocations.length && Math.random() < 0.78) {
+            const tree = forestTreeLocations[Math.floor(Math.random() * forestTreeLocations.length)];
+            const angle = Math.random() * Math.PI * 2;
+            const distance = clusterRadius * (0.45 + Math.random() * 0.8);
+            x = tree.x + Math.cos(angle) * distance;
+            z = tree.z + Math.sin(angle) * distance;
+        } else if (options.bounds) {
+            x = (Math.random() * 2 - 1) * options.bounds;
+            z = (Math.random() * 2 - 1) * options.bounds;
+        } else {
+            const radius = Math.sqrt(minRadius * minRadius + Math.random() * (maxRadius * maxRadius - minRadius * minRadius));
+            const angle = Math.random() * Math.PI * 2;
+            x = Math.cos(angle) * radius;
+            z = Math.sin(angle) * radius;
+        }
+
+        if (Math.hypot(x - 5, z - 5) < (options.campClearance || 14)
+            || isNearPath(x, z, options.pathClearance ?? 3)
+            || isNearPond(x, z, options.pondClearance ?? 2)) continue;
+        if (minSpacing) {
+            const cellX = Math.floor(x / minSpacing);
+            const cellZ = Math.floor(z / minSpacing);
+            let tooClose = false;
+            for (let dx = -1; dx <= 1 && !tooClose; dx++) {
+                for (let dz = -1; dz <= 1 && !tooClose; dz++) {
+                    for (const item of spacingCells.get(`${cellX + dx},${cellZ + dz}`) || []) {
+                        if (Math.hypot(item.x - x, item.z - z) < minSpacing) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (tooClose) continue;
+        }
+
+        const placement = {
+            x,
+            z,
+            rotation: Math.random() * Math.PI * 2,
+            scale: options.scaleMin + Math.random() * (options.scaleMax - options.scaleMin)
+        };
+        placements.push(placement);
+        if (minSpacing) {
+            const cellKey = `${Math.floor(x / minSpacing)},${Math.floor(z / minSpacing)}`;
+            if (!spacingCells.has(cellKey)) spacingCells.set(cellKey, []);
+            spacingCells.get(cellKey).push(placement);
+        }
+    }
+
+    createForestInstances(prototypes, placements, options.castShadow);
+    return placements;
+}
+
+function scatterForestGrid(prototypes, options = {}) {
+    if (!prototypes.length) return [];
+    const placements = [];
+    const spacing = options.spacing || 10.5;
+    const jitter = options.jitter || 2.6;
+    const bounds = options.bounds || 98;
+
+    for (let x = -bounds + spacing / 2; x <= bounds - spacing / 2; x += spacing) {
+        for (let z = -bounds + spacing / 2; z <= bounds - spacing / 2; z += spacing) {
+            const placementX = x + (Math.random() * 2 - 1) * jitter;
+            const placementZ = z + (Math.random() * 2 - 1) * jitter;
+            if (Math.hypot(placementX - 5, placementZ - 5) < 16
+                || isNearPath(placementX, placementZ, 2.8)
+                || isNearPond(placementX, placementZ, 1.8)) continue;
+
+            const prototypeIndex = Math.floor(Math.random() * prototypes.length);
+            const scale = options.scaleMin + Math.random() * (options.scaleMax - options.scaleMin);
+            placements.push({
+                x: placementX,
+                z: placementZ,
+                rotation: Math.random() * Math.PI * 2,
+                scale,
+                prototypeIndex,
+                collisionRadius: prototypes[prototypeIndex].collisionRadius * scale
+            });
+        }
+    }
+
+    createForestInstances(prototypes, placements, options.castShadow);
+    return placements;
+}
+
+function canMoveToForestPosition(x, z) {
+    return forestTreeLocations.every(tree => (
+        Math.hypot(x - tree.x, z - tree.z) >= tree.collisionRadius + PLAYER_COLLISION_RADIUS
+    ));
+}
+
+async function buildImportedForest() {
+    const packFiles = [
+        "./assets/forest_mine__simple_low_poly_pack.glb",
+        "./assets/low_poly_stylized_tree_pack.glb",
+        "./assets/low_poly_trees__nature_pack_70_props.glb"
+    ];
+    const loadedPacks = await Promise.allSettled(packFiles.map(loadForestPack));
+    const packScenes = loadedPacks.map((result, index) => {
+        if (result.status === "fulfilled") return { index, root: result.value };
+        console.error(`Không thể tải model cảnh rừng ${packFiles[index]}:`, result.reason);
+        return null;
+    }).filter(Boolean);
+
+    const treePrototypes = [];
+    const bushPrototypes = [];
+    const mushroomPrototypes = [];
+    const stonePrototypes = [];
+    const stumpPrototypes = [];
+    const barkPrototypes = [];
+    const flowerPrototypes = [];
+    const grassPrototypes = [];
+    let minePrototypes = [];
+
+    packScenes.forEach(({ root, index }) => {
+        treePrototypes.push(...createForestPrototypes(
+            root,
+            index === 0 ? /^Tree_[123]$/i : index === 1 ? /^\d{2}-tree-root$/i : /^Tree_0[1-5](?:\.\d+)?$/i,
+            [16, 22]
+        ));
+        if (index === 0) {
+            mushroomPrototypes.push(...createForestPrototypes(root, /^Mushroom(?:\.\d+)?$/i, [0.35, 0.75]));
+            stonePrototypes.push(...createForestPrototypes(root, /^(?:Big|Small)_stone(?:\.\d+)?$/i, [0.7, 2]));
+            stumpPrototypes.push(...createForestPrototypes(root, /^(?:Small|Medium)_stump(?:\.\d+)?$/i, [0.7, 1.5]));
+            barkPrototypes.push(...createForestPrototypes(root, /^Bark(?:\.\d+)?$/i, [1.4, 2.4]));
+            minePrototypes = createForestPrototypes(root, /^Mine$/i, [8, 11]);
+        } else if (index === 2) {
+            bushPrototypes.push(...createForestPrototypes(root, /^Bush_0[12](?:\.\d+)?$/i, [1.3, 2.2]));
+            mushroomPrototypes.push(...createForestPrototypes(root, /^Mushroom_0[123](?:[._]\d+)?$/i, [0.4, 0.85]));
+            stonePrototypes.push(...createForestPrototypes(root, /^Stone_0[1-4]$/i, [0.7, 1.8]));
+            flowerPrototypes.push(...createForestPrototypes(root, /^Flover_0[1-3](?:\.\d+)?$/i, [0.45, 0.9]));
+            grassPrototypes.push(...createForestPrototypes(root, /^Grass_0[12](?:\.\d+)?$/i, [0.4, 0.85]));
+        }
+    });
+
+    if (!treePrototypes.length) {
+        throw new Error("Không tìm thấy model cây trong các file GLB.");
+    }
+
+    forestTreeLocations.push(...scatterForestGrid(treePrototypes, {
+        bounds: 98, spacing: 10.5, jitter: 2.6,
+        scaleMin: 0.82, scaleMax: 1.2, castShadow: true
+    }));
+    scatterForestAssets(bushPrototypes, 42, {
+        minRadius: 21, maxRadius: 76, clusterRadius: 8,
+        scaleMin: 0.75, scaleMax: 1.2
+    });
+    scatterForestAssets(mushroomPrototypes, 115, {
+        minRadius: 19, maxRadius: 77, clusterRadius: 5.2,
+        minSpacing: 1.25, scaleMin: 0.75, scaleMax: 1.45
+    });
+    scatterForestAssets(stonePrototypes, 48, {
+        minRadius: 20, maxRadius: 78, clusterRadius: 7,
+        minSpacing: 2, scaleMin: 0.65, scaleMax: 1.2
+    });
+    scatterForestAssets(stumpPrototypes, 28, {
+        minRadius: 20, maxRadius: 75, clusterRadius: 6,
+        minSpacing: 2.8, scaleMin: 0.75, scaleMax: 1.25
+    });
+    scatterForestAssets(barkPrototypes, 16, {
+        minRadius: 20, maxRadius: 75, clusterRadius: 6,
+        minSpacing: 3, scaleMin: 0.7, scaleMax: 1.15
+    });
+    scatterForestAssets(flowerPrototypes, 70, {
+        minRadius: 13, maxRadius: 70, clusterRadius: 4.5,
+        minSpacing: 1.2, scaleMin: 0.7, scaleMax: 1.2
+    });
+    scatterForestAssets(grassPrototypes, 55, {
+        minRadius: 15, maxRadius: 75, clusterRadius: 3.5,
+        minSpacing: 1.1, scaleMin: 0.7, scaleMax: 1.3
+    });
+    if (minePrototypes.length) {
+        createForestInstances(minePrototypes, [{ x: 54, z: -52, rotation: -0.5, scale: 1 }], true);
+    }
+}
+
+function createProceduralForestFallback() {
+    for (let i = 0; i < 220; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 19 + Math.random() * 70;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        if (Math.hypot(x - 5, z - 5) < 13 || isNearPath(x, z, 4.2) || isNearPond(x, z, 2.5)) continue;
+        const broadleaf = Math.random() > 0.22;
+        createTree(x, z, broadleaf, broadleaf && Math.random() > 0.32);
+    }
+}
+
+// ============================================================================
 // KHỞI TẠO THẾ GIỚI (WORLD BUILDING)
 // ============================================================================
 const campfire = createFire();
@@ -2019,16 +2319,10 @@ scene.add(ground);
 campPathRoutes.forEach(createTrail);
 createDistantHills();
 
-// Rừng cây và Cổ thụ Hoa Anh Đào
-for (let i = 0; i < 220; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 19 + Math.random() * 70;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    if (Math.hypot(x - 5, z - 5) < 13 || isNearPath(x, z, 4.2) || isNearPond(x, z, 2.5)) continue;
-    const broadleaf = Math.random() > 0.22;
-    createTree(x, z, broadleaf, broadleaf && Math.random() > 0.32);
-}
+buildImportedForest().catch(error => {
+    console.error("Không thể dựng rừng từ các file GLB:", error);
+    if (!forestTreeLocations.length) createProceduralForestFallback();
+});
 
 // Cây Đại Cổ Thụ Hoa Anh Đào tại trung tâm ngắm cảnh
 const grandSakura = createTree(14, 18, true, true);
@@ -2340,7 +2634,14 @@ document.getElementById("creator-form")?.addEventListener("submit", async event 
 const chatMessagesEl = document.getElementById("chat-messages");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
+const chatTitleEl = document.getElementById("chat-title");
+const chatModeLabelEl = document.getElementById("chat-mode-label");
 let chatMessages = readStorage(CHAT_KEY, []);
+const remotePlayers = new Map();
+const serverChatMessages = new Map();
+let multiplayerStatus = "unconfigured";
+let onlinePlayerCount = 0;
+let multiplayerChatActive = false;
 
 function renderChat() {
     if (!chatMessagesEl) return;
@@ -2360,16 +2661,185 @@ function renderChat() {
 }
 renderChat();
 
+function updateMultiplayerStatus(status, detail) {
+    multiplayerStatus = status;
+    const statusEl = document.getElementById("multiplayer-status");
+    const statusTextEl = document.getElementById("multiplayer-status-text");
+    if (statusEl) statusEl.dataset.state = status;
+
+    const statusMessages = {
+        unconfigured: "Chơi một mình · Firebase chưa cấu hình",
+        connecting: "Đang kết nối khu trại...",
+        connected: `Đang online · ${onlinePlayerCount} người trong khu trại`,
+        disconnected: "Mất kết nối · đang chờ Firebase...",
+        error: "Kết nối Firebase gặp lỗi"
+    };
+    if (statusTextEl) statusTextEl.textContent = statusMessages[status] || statusMessages.error;
+    if (status === "error" && detail) console.error("Firebase multiplayer:", detail);
+
+    multiplayerChatActive = status === "connected";
+    if (chatTitleEl) chatTitleEl.textContent = multiplayerChatActive ? "💬 Trò chuyện khu trại" : "📖 Nhật Ký Lữ Hành";
+    if (chatModeLabelEl) chatModeLabelEl.textContent = multiplayerChatActive ? "Mọi người đều thấy" : "Lưu trên máy này";
+    if (chatInput) chatInput.placeholder = multiplayerChatActive ? "Nhắn mọi người trong trại..." : "Ghi lại cảm xúc hôm nay...";
+
+    if (multiplayerChatActive) {
+        chatMessages = [...serverChatMessages.values()]
+            .sort((a, b) => a.time - b.time)
+            .slice(-25);
+    } else {
+        chatMessages = readStorage(CHAT_KEY, []);
+    }
+    renderChat();
+}
+
+function createNameTag(name) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 112;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "rgba(20, 33, 33, 0.82)";
+    context.beginPath();
+    context.roundRect(12, 12, 488, 88, 30);
+    context.fill();
+    context.font = "bold 48px Quicksand, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = "#fff4df";
+    context.fillText(name.slice(0, 18), 256, 57, 450);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+    tag.scale.set(2.4, 0.53, 1);
+    tag.position.y = 3.1;
+    tag.renderOrder = 20;
+    return tag;
+}
+
+function removeRemotePlayer(id) {
+    const remote = remotePlayers.get(id);
+    if (!remote) return;
+    scene.remove(remote.mesh);
+    remote.mesh.traverse(node => {
+        node.geometry?.dispose();
+        if (Array.isArray(node.material)) node.material.forEach(material => material.dispose());
+        else node.material?.dispose();
+    });
+    scene.remove(remote.nameTag);
+    remote.nameTag.material.map?.dispose();
+    remote.nameTag.material.dispose();
+    remotePlayers.delete(id);
+}
+
+function updateRemotePlayers(players, currentUserId) {
+    onlinePlayerCount = Object.keys(players).length;
+    if (multiplayerStatus === "connected") {
+        const statusTextEl = document.getElementById("multiplayer-status-text");
+        if (statusTextEl) statusTextEl.textContent = `Đang online · ${onlinePlayerCount} người trong khu trại`;
+    }
+
+    const presentIds = new Set();
+    for (const [id, data] of Object.entries(players)) {
+        if (id === currentUserId || !data || typeof data !== "object") continue;
+        const name = typeof data.name === "string" ? data.name.trim().slice(0, 18) : "";
+        const color = typeof data.color === "string" && /^#[\da-f]{6}$/i.test(data.color) ? data.color : defaultCharacter.color;
+        const style = ["hiker", "spirit", "stargazer"].includes(data.style) ? data.style : "hiker";
+        const gender = data.gender === "male" ? "male" : "female";
+        const x = Number.isFinite(data.x) ? THREE.MathUtils.clamp(data.x, -88, 88) : 5;
+        const z = Number.isFinite(data.z) ? THREE.MathUtils.clamp(data.z, -88, 88) : 5;
+        const rotation = Number.isFinite(data.rotation) ? data.rotation : 0;
+        const sitting = data.sitting === true;
+        if (!name) continue;
+
+        presentIds.add(id);
+        const appearance = `${name}|${color}|${style}|${gender}`;
+        let remote = remotePlayers.get(id);
+        if (remote && remote.appearance !== appearance) {
+            removeRemotePlayer(id);
+            remote = undefined;
+        }
+        if (!remote) {
+            const mesh = createCharacter({ name, color, style, gender });
+            mesh.position.set(x, terrainHeight(x, z) + CHARACTER_FOOT_OFFSET, z);
+            mesh.rotation.y = rotation;
+            const nameTag = createNameTag(name);
+            scene.add(nameTag);
+            remote = {
+                mesh,
+                nameTag,
+                appearance,
+                target: { x, z, rotation, sitting }
+            };
+            remotePlayers.set(id, remote);
+        } else {
+            remote.target = { x, z, rotation, sitting };
+        }
+    }
+
+    for (const id of remotePlayers.keys()) {
+        if (!presentIds.has(id)) removeRemotePlayer(id);
+    }
+}
+
+function addServerChatMessage(message) {
+    if (!message || typeof message.id !== "string" || typeof message.name !== "string" || typeof message.text !== "string") return;
+    const time = Number.isFinite(message.createdAt) ? message.createdAt : Date.now();
+    serverChatMessages.set(message.id, {
+        id: message.id,
+        name: message.name.slice(0, 18),
+        text: message.text.slice(0, 180),
+        time
+    });
+    const oldestFirst = [...serverChatMessages.entries()].sort((a, b) => a[1].time - b[1].time);
+    while (oldestFirst.length > 25) {
+        serverChatMessages.delete(oldestFirst.shift()[0]);
+    }
+    if (multiplayerChatActive) {
+        chatMessages = [...serverChatMessages.values()].sort((a, b) => a.time - b.time).slice(-25);
+        renderChat();
+    }
+}
+
+const multiplayer = createFirebaseMultiplayer({
+    onPlayersChanged: updateRemotePlayers,
+    onChatMessage: addServerChatMessage,
+    onStatus: updateMultiplayerStatus
+});
+void multiplayer.start();
+
 chatForm?.addEventListener("submit", event => {
     event.preventDefault();
     const text = chatInput.value.trim();
     if (!text) return;
+    if (multiplayerChatActive) {
+        void multiplayer.sendChat({ name: character.name, text })
+            .then(() => { chatInput.value = ""; })
+            .catch(error => {
+                console.error("Không gửi được tin nhắn khu trại:", error);
+                showToast("Không gửi được tin nhắn. Hãy kiểm tra kết nối Firebase nhé.");
+            });
+        return;
+    }
     chatMessages.push({ name: character.name, text, time: Date.now() });
     chatMessages = chatMessages.slice(-25);
     saveStorage(CHAT_KEY, chatMessages);
     renderChat();
     chatInput.value = "";
 });
+
+setInterval(() => {
+    if (!gameStarted || !localPlayerMesh) return;
+    multiplayer.updatePlayer({
+        name: character.name,
+        color: character.color,
+        style: character.style,
+        gender: character.gender || defaultCharacter.gender,
+        x: localPos.x,
+        z: localPos.z,
+        rotation: localPlayerMesh.rotation.y,
+        sitting: isSitting
+    });
+}, 100);
 
 // Mobile Touch Controls
 [...document.querySelectorAll("#touch-controls button")].forEach(button => {
@@ -2403,17 +2873,41 @@ function animate() {
 
     // Di chuyển nhân vật
     if (localPlayerMesh && gameStarted && document.activeElement !== chatInput) {
-        let moveX = Number(keys.d || keys.ArrowRight) - Number(keys.a || keys.ArrowLeft);
-        let moveZ = Number(keys.s || keys.ArrowDown) - Number(keys.w || keys.ArrowUp);
+        const inputX = Number(keys.d || keys.ArrowRight) - Number(keys.a || keys.ArrowLeft);
+        const inputForward = Number(keys.w || keys.ArrowUp) - Number(keys.s || keys.ArrowDown);
+        const cameraForward = new THREE.Vector3(
+            controls.target.x - camera.position.x,
+            0,
+            controls.target.z - camera.position.z
+        );
+        if (cameraForward.lengthSq() < 0.0001) cameraForward.set(0, 0, -1);
+        cameraForward.normalize();
+        const cameraRight = new THREE.Vector3(-cameraForward.z, 0, cameraForward.x);
+        let moveX = cameraRight.x * inputX + cameraForward.x * inputForward;
+        let moveZ = cameraRight.z * inputX + cameraForward.z * inputForward;
         const length = Math.hypot(moveX, moveZ);
         if (length > 0 && !isSitting) {
             moving = true;
             moveX /= length;
             moveZ /= length;
             const speed = 5.6 * delta;
-            localPos.x = THREE.MathUtils.clamp(localPos.x + moveX * speed, -88, 88);
-            localPos.z = THREE.MathUtils.clamp(localPos.z + moveZ * speed, -88, 88);
-            localPlayerMesh.rotation.y = Math.atan2(moveX, moveZ);
+            const nextX = THREE.MathUtils.clamp(localPos.x + moveX * speed, -88, 88);
+            const nextZ = THREE.MathUtils.clamp(localPos.z + moveZ * speed, -88, 88);
+            if (canMoveToForestPosition(nextX, nextZ)) {
+                localPos.x = nextX;
+                localPos.z = nextZ;
+            } else {
+                const canMoveX = canMoveToForestPosition(nextX, localPos.z);
+                const canMoveZ = canMoveToForestPosition(localPos.x, nextZ);
+                if (canMoveX) localPos.x = nextX;
+                if (canMoveZ) localPos.z = nextZ;
+            }
+            const targetRotation = Math.atan2(moveX, moveZ) + PLAYER_MODEL_FACING_OFFSET;
+            const angleDelta = THREE.MathUtils.euclideanModulo(
+                targetRotation - localPlayerMesh.rotation.y + Math.PI,
+                Math.PI * 2
+            ) - Math.PI;
+            localPlayerMesh.rotation.y += angleDelta * (1 - Math.exp(-12 * delta));
         }
 
         // Camera bám theo nhân vật mượt mà
@@ -2432,6 +2926,17 @@ function animate() {
             controls.target.y = targetY;
             controls.target.z = targetZ;
         }
+    }
+
+    for (const remote of remotePlayers.values()) {
+        const { mesh, nameTag, target } = remote;
+        mesh.position.x = THREE.MathUtils.damp(mesh.position.x, target.x, 10, delta);
+        mesh.position.z = THREE.MathUtils.damp(mesh.position.z, target.z, 10, delta);
+        const targetY = terrainHeight(mesh.position.x, mesh.position.z) + (target.sitting ? 0.28 : CHARACTER_FOOT_OFFSET);
+        mesh.position.y = THREE.MathUtils.damp(mesh.position.y, targetY, 10, delta);
+        const angleDelta = THREE.MathUtils.euclideanModulo(target.rotation - mesh.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
+        mesh.rotation.y += angleDelta * (1 - Math.exp(-10 * delta));
+        nameTag.position.set(mesh.position.x, mesh.position.y + 2.45, mesh.position.z);
     }
 
     animateCharacter(delta, time, moving);
