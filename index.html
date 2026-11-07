@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#183c37">
+    <meta name="description" content="Một khu cắm trại 3D anime yên bình để khám phá, ngắm cảnh và chữa lành.">
+    <title>Rừng Nhỏ — Khu Trại Chữa Lành 3D Anime</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fflate@0.6.10/umd/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div class="w-16 h-16 border-4 border-t-orange-400 border-pink-300/30 rounded-full animate-spin mb-4"></div>
+        <h2 class="text-xl font-bold tracking-wider text-amber-200">Đang tạo thung lũng Anime...</h2>
+        <p class="text-white/70 text-sm mt-2">Gió thổi cánh hoa anh đào và thắp sáng khu trại</p>
+    </div>
+
+    <!-- Character creator -->
+    <section id="creator-screen" class="screen-overlay" aria-labelledby="creator-title">
+        <div class="creator-card glass">
+            <div class="creator-copy">
+                <p class="eyebrow"><span class="eyebrow-mark">✦</span> HÀNH TRÌNH MÙA XUÂN · ANIME 3D</p>
+                <h1 id="creator-title">Một ngày<br>ở <span>Rừng Nhỏ</span></h1>
+                <p class="creator-intro">Tạo một nhân vật anime đáng yêu hoặc tải model 3D riêng của bạn để bắt đầu chuyến ngắm cảnh thung lũng chữa lành.</p>
+                
+                <form id="creator-form">
+                    <label class="field-label" for="character-name">Tên người lữ hành</label>
+                    <input id="character-name" maxlength="18" value="Lá Nhỏ" autocomplete="nickname" placeholder="Tên nhân vật" required>
+                    
+                    <span class="field-label">Bạn đồng hành</span>
+                    <div class="gender-options" role="group" aria-label="Giới tính nhân vật">
+                        <button type="button" class="gender-choice selected" data-gender="female"><span>♀</span>Thiếu Nữ (Su)</button>
+                        <button type="button" class="gender-choice" data-gender="male"><span>♂</span>Thiếu Niên (Shu)</button>
+                    </div>
+
+                    <span class="field-label">Màu áo thám hiểm</span>
+                    <div class="color-options" role="group" aria-label="Màu áo nhân vật">
+                        <button type="button" class="color-choice selected" data-color="#e78b62" aria-label="Cam đất" style="--swatch:#e78b62"></button>
+                        <button type="button" class="color-choice" data-color="#6c9e8d" aria-label="Xanh rừng" style="--swatch:#6c9e8d"></button>
+                        <button type="button" class="color-choice" data-color="#8f83bd" aria-label="Tím mộng mơ" style="--swatch:#8f83bd"></button>
+                        <button type="button" class="color-choice" data-color="#e5b954" aria-label="Vàng nắng" style="--swatch:#e5b954"></button>
+                        <button type="button" class="color-choice" data-color="#5fa8d3" aria-label="Xanh biển Genshin" style="--swatch:#5fa8d3"></button>
+                        <button type="button" class="color-choice" data-color="#f2789f" aria-label="Hồng Sakura" style="--swatch:#f2789f"></button>
+                    </div>
+
+                    <span class="field-label">Khí chất lữ hành</span>
+                    <div class="style-options">
+                        <button type="button" class="style-choice selected" data-style="hiker"><span>🎒</span>Nhà thám hiểm</button>
+                        <button type="button" class="style-choice" data-style="spirit"><span>🌿</span>Tinh linh rừng</button>
+                        <button type="button" class="style-choice" data-style="stargazer"><span>🌙</span>Kẻ ngắm sao</button>
+                    </div>
+
+                    <div class="custom-model-box">
+                        <button type="button" id="btn-custom-model" class="custom-model-btn">
+                            <span>📂</span> Tải model Anime riêng (.glb / .vrm)
+                        </button>
+                        <input type="file" id="model-file-input" accept=".glb,.gltf,.vrm" style="display:none">
+                    </div>
+
+                    <button class="primary-btn" type="submit">Bước vào thung lũng <span>→</span></button>
+                    <p id="creator-error" class="creator-error" role="alert" hidden></p>
+                    <p class="save-note"><span>✦</span> Đồ họa Cel-Shading · Thư giãn ngắm cảnh</p>
+                </form>
+            </div>
+            <div class="creator-art" aria-hidden="true">
+                <div class="art-sun"></div>
+                <div class="art-hill hill-back"></div>
+                <div class="art-hill hill-front"></div>
+                <div class="art-blossom blossom-one">🌸</div>
+                <div class="art-blossom blossom-two">🌸</div>
+                <div class="art-blossom blossom-three">🌸</div>
+                <div id="character-preview" class="character-preview"></div>
+                <div class="preview-ground"></div>
+                <div class="preview-caption"><span>3D ANIME CHIBI LỮ HÀNH</span><strong>Tạo hình dễ thương phong cách Genshin</strong></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tarot Modal -->
+    <div id="tarot-modal" onclick="closeTarot()">
+        <div class="tarot-card pointer-events-auto" onclick="event.stopPropagation()">
+            <div class="text-4xl mb-4">✨</div>
+            <h3 class="text-xl font-bold mb-6 text-orange-200">Thông Điệp Vũ Trụ</h3>
+            <p id="tarot-text" class="text-lg leading-relaxed text-white/90 italic">"Mọi chuyện rồi sẽ ổn thôi, hãy hít thở thật sâu."</p>
+            <button onclick="closeTarot()" class="mt-8 glass-btn bg-white/20 hover:bg-white/30 text-sm">Cảm ơn</button>
+        </div>
+    </div>
+
+    <!-- Interactive UI Layer -->
+    <div id="ui-layer">
+        <!-- Top Header -->
+        <div class="flex flex-wrap justify-between items-start gap-2 pointer-events-none">
+            <div class="glass p-3 sm:p-4 pointer-events-auto">
+                <div class="flex items-center gap-2">
+                    <span class="text-pink-300 text-lg">🌸</span>
+                    <h1 class="text-lg md:text-2xl font-bold text-amber-200 drop-shadow-md">Rừng Nhỏ</h1>
+                </div>
+                <p id="player-label" class="text-xs md:text-sm text-white/80 mt-1">WASD để đi · E: Tương tác · K: Ngồi nghỉ · P: Chụp ảnh</p>
+            </div>
+            
+            <div class="flex flex-wrap gap-2 pointer-events-auto">
+                <button id="btn-camera" class="glass-btn flex items-center gap-1.5" title="Bật chế độ ngắm cảnh & chụp ảnh (Phím P)">
+                    <span>📸</span> <span class="hidden sm:inline">Chụp Ảnh</span>
+                </button>
+                <button id="btn-time" class="glass-btn flex items-center gap-1.5" title="Đổi thời gian trong ngày (Ban ngày / Hoàng hôn / Đêm sao)">
+                    <span id="time-icon">☀️</span> <span id="time-text" class="hidden sm:inline">Ban Ngày</span>
+                </button>
+                <button id="btn-sit" class="glass-btn flex items-center gap-1.5" title="Ngồi ngắm cảnh thư giãn (Phím K)">
+                    <span>🧘</span> <span class="hidden sm:inline">Ngồi Nghỉ</span>
+                </button>
+                <button id="btn-music" class="glass-btn flex items-center gap-1.5" title="Bật/Tắt âm thanh thiên nhiên & lofi harp">
+                    <span id="music-icon">🎵</span> <span class="hidden sm:inline">Âm Nhạc</span>
+                </button>
+                <button id="btn-rain" class="glass-btn flex items-center gap-1.5" title="Bật/Tắt mưa">
+                    <span>🌧️</span> <span class="hidden sm:inline">Mưa</span>
+                </button>
+                <button id="btn-tarot" class="glass-btn flex items-center gap-1.5">
+                    <span>🎴</span> <span class="hidden sm:inline">Rút Quẻ</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="objective-panel" class="glass pointer-events-auto">
+            <div class="objective-heading"><span>🧭</span><span>DANH LAM THẮNG CẢNH</span></div>
+            <p id="objective-text">Đi dạo quanh thung lũng, ngắm hoa anh đào và tìm các điểm ngắm cảnh thơ mộng.</p>
+            <div class="progress-track"><div id="progress-fill"></div></div>
+            <span id="progress-label">0 / 4 điểm ngắm cảnh</span>
+        </div>
+
+        <div id="interaction-prompt" class="glass">Nhấn <kbd>E</kbd> để khám phá</div>
+        <div id="toast" role="status" aria-live="polite"></div>
+
+        <!-- Bottom Chat & Help -->
+        <div class="flex flex-col justify-end items-start mt-auto">
+            <div id="chat-container" class="glass p-3">
+                <div class="text-[11px] text-amber-200/90 font-semibold mb-1 flex items-center justify-between">
+                    <span>📖 Nhật Ký Lữ Hành</span>
+                    <span class="text-white/50 text-[10px]">Tự động lưu</span>
+                </div>
+                <div id="chat-messages">
+                    <!-- Messages will appear here -->
+                </div>
+                <form id="chat-form" class="mt-2 flex gap-2">
+                    <input type="text" id="chat-input" class="flex-1 bg-black/40 border border-white/20 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-amber-300 placeholder-white/50" placeholder="Ghi lại cảm xúc hôm nay..." autocomplete="off" maxlength="180">
+                    <button type="submit" class="bg-amber-600/80 hover:bg-amber-500 text-white rounded-full p-2 aspect-square flex items-center justify-center transition" title="Gửi ghi chép">
+                        ➤
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Photo / Sightseeing Mode HUD Overlay -->
+    <div id="photo-mode-overlay" class="hidden pointer-events-none">
+        <div class="photo-viewfinder"></div>
+        <div class="photo-watermark">
+            <div class="text-lg font-bold tracking-widest text-white/90">✦ RỪNG NHỎ ✦</div>
+            <div class="text-xs text-amber-200/80 tracking-wider">MỘT NGÀY BÌNH YÊN · CHILL & RELAX</div>
+        </div>
+        <div class="photo-controls pointer-events-auto">
+            <button id="btn-snap-photo" class="photo-action-btn primary" title="Chụp và tải ảnh về máy">
+                <span>📸</span> Chụp & Tải Ảnh
+            </button>
+            <button id="btn-photo-time" class="photo-action-btn" title="Đổi ánh sáng">
+                <span>🌅</span> Đổi Ánh Sáng
+            </button>
+            <button id="btn-photo-sit" class="photo-action-btn" title="Đổi tư thế">
+                <span>🧘</span> Ngồi / Đứng
+            </button>
+            <button id="btn-exit-photo" class="photo-action-btn close" title="Thoát chế độ chụp ảnh">
+                <span>✕</span> Thoát (Esc)
+            </button>
+        </div>
+    </div>
+
+    <!-- Touch Controls for Mobile -->
+    <nav id="touch-controls" aria-label="Điều khiển nhân vật">
+        <button data-key="w" aria-label="Đi lên">▲</button>
+        <div><button data-key="a" aria-label="Đi trái">◀</button><button data-key="s" aria-label="Đi xuống">▼</button><button data-key="d" aria-label="Đi phải">▶</button></div>
+    </nav>
+    <button id="touch-interact" aria-label="Tương tác">E</button>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
