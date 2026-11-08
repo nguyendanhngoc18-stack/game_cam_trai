@@ -26,8 +26,11 @@ All visitors enter the same `rung-nho` room. Player presence is removed by
 Realtime Database when a browser disconnects. The game sends position updates
 only when the player state changes. Player appearance settings and chat are
 shared; uploaded custom models, discovery progress, weather, time of day, and
-music remain local to each browser. Other visitors are shown with the built-in
-avatar using their selected appearance.
+music remain local to each browser. The backpack's tent, wood, fish, meat,
+cooked food, placed tents/campfires, hunger, forage inventory, daily quest
+progress, reward leaves, and campsite decorations are saved in that browser's
+local storage; daily quests refresh using the player's local date. Other
+visitors are shown with the built-in avatar using their selected appearance.
 
 This is a client-authoritative prototype: users can change their own reported
 position and send chat. Firebase rules prevent unauthenticated access and

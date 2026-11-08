@@ -22,10 +22,10 @@
               ".validate": "newData.val() === 'female' || newData.val() === 'male'"
             },
             "x": {
-              ".validate": "newData.isNumber() && newData.val() >= -88 && newData.val() <= 88"
+              ".validate": "newData.isNumber() && newData.val() >= -140 && newData.val() <= 140"
             },
             "z": {
-              ".validate": "newData.isNumber() && newData.val() >= -88 && newData.val() <= 88"
+              ".validate": "newData.isNumber() && newData.val() >= -140 && newData.val() <= 140"
             },
             "rotation": {
               ".validate": "newData.isNumber()"

@@ -8,9 +8,12 @@ import { createFirebaseMultiplayer } from "./firebase-multiplayer.js";
 const PROFILE_KEY = "rung-nho-profile-v1";
 const CHAT_KEY = "rung-nho-chat-v1";
 const DISCOVERY_KEY = "rung-nho-discoveries-v1";
+const CAMP_KEY = "rung-nho-camp-v1";
 const CHARACTER_FOOT_OFFSET = 0.69;
 const PLAYER_COLLISION_RADIUS = 0.48;
 const PLAYER_MODEL_FACING_OFFSET = Math.PI;
+const WORLD_HALF_SIZE = 150;
+const WORLD_PLAYER_LIMIT = WORLD_HALF_SIZE - 10;
 const defaultCharacter = { name: "Lá Nhỏ", color: "#e78b62", style: "hiker", gender: "female" };
 
 function readStorage(key, fallback) {
@@ -59,7 +62,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 scene.fog = new THREE.FogExp2(0xa6d9e8, 0.0032);
 
-const camera = new THREE.PerspectiveCamera(56, window.innerWidth / window.innerHeight, 0.1, 600);
+const camera = new THREE.PerspectiveCamera(56, window.innerWidth / window.innerHeight, 0.1, 850);
 camera.position.set(0, 10, 16);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -282,7 +285,11 @@ function createSky() {
             shape.scale.set(1.4 + Math.random() * 0.7, 0.45 + Math.random() * 0.3, 0.7);
             cloud.add(shape);
         }
-        cloud.position.set((Math.random() - 0.5) * 260, 32 + Math.random() * 20, (Math.random() - 0.5) * 220);
+        cloud.position.set(
+            (Math.random() - 0.5) * WORLD_HALF_SIZE * 3.2,
+            32 + Math.random() * 20,
+            (Math.random() - 0.5) * WORLD_HALF_SIZE * 2.8
+        );
         cloud.scale.setScalar(2.0 + Math.random() * 2.8);
         scene.add(cloud);
         animatedClouds.push(cloud);
@@ -384,9 +391,14 @@ function setEnvironmentTime(mode) {
 // ============================================================================
 const animatedTrees = [];
 const pondRipples = [];
+const riverHighlights = [];
 const pondSites = [
     { x: -24, z: -18, radius: 8.5 },
     { x: 34, z: -35, radius: 5.2 }
+];
+const riverRoutes = [
+    [[-145, 19], [-120, 18], [-98, 12], [-78, 16], [-59, 12], [-44, 7], [-34, 2], [-31, -7], [-42, -15], [-64, -18], [-90, -14], [-120, -20], [-145, -17]],
+    [[145, -68], [120, -62], [96, -58], [78, -49], [62, -52], [48, -44], [41, -32], [50, -22], [72, -18], [96, -25], [120, -32], [145, -28]]
 ];
 const campPathRoutes = [
     [[0, 2], [-3, -3], [-9, -8], [-16, -14]],
@@ -394,22 +406,52 @@ const campPathRoutes = [
     [[0, -1], [6, 4], [16, 13], [25, 27]]
 ];
 
-function terrainHeight(x, z) {
+function baseTerrainHeight(x, z) {
     const distance = Math.hypot(x, z);
     const clearing = THREE.MathUtils.smoothstep(distance, 13, 23);
-    let height = (Math.sin(x * 0.065 + Math.cos(z * 0.07)) * 1.75
+    return (Math.sin(x * 0.065 + Math.cos(z * 0.07)) * 1.75
         + Math.cos(z * 0.058 - x * 0.025) * 1.4
         + Math.sin((x + z) * 0.11) * 0.55) * clearing;
+}
+
+function nearestRiverPoint(x, z) {
+    let nearest = { distance: Infinity, x: 0, z: 0 };
+    for (const route of riverRoutes) {
+        for (let i = 0; i < route.length - 1; i++) {
+            const [ax, az] = route[i];
+            const [bx, bz] = route[i + 1];
+            const dx = bx - ax;
+            const dz = bz - az;
+            const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+            const nearestX = ax + dx * t;
+            const nearestZ = az + dz * t;
+            const distance = Math.hypot(x - nearestX, z - nearestZ);
+            if (distance < nearest.distance) nearest = { distance, x: nearestX, z: nearestZ };
+        }
+    }
+    return nearest;
+}
+
+function terrainHeight(x, z) {
+    let height = baseTerrainHeight(x, z);
     const pondBasin = pondSites.reduce((deepest, pond) => {
         const d = Math.hypot(x - pond.x, z - pond.z);
         return Math.max(deepest, 1 - THREE.MathUtils.smoothstep(d, pond.radius * 0.8, pond.radius * 2));
     }, 0);
     height = THREE.MathUtils.lerp(height, -0.5, pondBasin);
+    const riverPoint = nearestRiverPoint(x, z);
+    const riverBasin = 1 - THREE.MathUtils.smoothstep(riverPoint.distance, 2.4, 7.2);
+    const riverBed = baseTerrainHeight(riverPoint.x, riverPoint.z) - 0.62;
+    height = THREE.MathUtils.lerp(height, riverBed, riverBasin);
     return height;
 }
 
 function isNearPond(x, z, margin = 0) {
     return pondSites.some(pond => Math.hypot(x - pond.x, z - pond.z) < pond.radius + margin);
+}
+
+function isNearRiver(x, z, margin = 0) {
+    return nearestRiverPoint(x, z).distance < 2.4 + margin;
 }
 
 function isNearPath(x, z, margin = 2.6) {
@@ -468,13 +510,140 @@ function createTrail(route) {
     scene.add(trail);
 }
 
+function createRiver(route, routeIndex) {
+    const curve = new THREE.CatmullRomCurve3(route.map(([x, z]) => new THREE.Vector3(x, 0, z)));
+    const segments = 180;
+    const waterPositions = [];
+    const waterColors = [];
+    const waterIndices = [];
+    const shallowColor = new THREE.Color(0x82d6ce);
+    const deepColor = new THREE.Color(0x3b9eb6);
+    const bankPositions = [[], []];
+    const bankColors = [[], []];
+    const bankIndices = [[], []];
+
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const point = curve.getPointAt(t);
+        const tangent = curve.getTangentAt(t);
+        const halfWidth = 2.2 + Math.sin(t * Math.PI * 8 + routeIndex) * 0.2;
+        const normalX = -tangent.z;
+        const normalZ = tangent.x;
+        const waterY = baseTerrainHeight(point.x, point.z) - 0.2;
+        for (let side = -1; side <= 1; side++) {
+            waterPositions.push(
+                point.x + normalX * halfWidth * side,
+                waterY + Math.abs(side) * 0.006,
+                point.z + normalZ * halfWidth * side
+            );
+            const color = side === 0 ? deepColor : shallowColor;
+            waterColors.push(color.r, color.g, color.b);
+        }
+
+        for (let bankSide = 0; bankSide < 2; bankSide++) {
+            const direction = bankSide === 0 ? -1 : 1;
+            const innerX = point.x + normalX * halfWidth * direction;
+            const innerZ = point.z + normalZ * halfWidth * direction;
+            const outerX = point.x + normalX * (halfWidth + 1.55) * direction;
+            const outerZ = point.z + normalZ * (halfWidth + 1.55) * direction;
+            bankPositions[bankSide].push(
+                innerX, waterY - 0.045, innerZ,
+                outerX, terrainHeight(outerX, outerZ) + 0.035, outerZ
+            );
+            bankColors[bankSide].push(0.74, 0.68, 0.48, 0.43, 0.62, 0.36);
+        }
+    }
+
+    for (let i = 0; i < segments; i++) {
+        const row = i * 3;
+        const next = row + 3;
+        waterIndices.push(row, row + 1, next, row + 1, next + 1, next);
+        waterIndices.push(row + 1, row + 2, next + 1, row + 2, next + 2, next + 1);
+        for (let bankSide = 0; bankSide < 2; bankSide++) {
+            const bankRow = i * 2;
+            const bankNext = bankRow + 2;
+            bankIndices[bankSide].push(bankRow, bankRow + 1, bankNext, bankRow + 1, bankNext + 1, bankNext);
+        }
+    }
+
+    const waterGeometry = new THREE.BufferGeometry();
+    waterGeometry.setAttribute("position", new THREE.Float32BufferAttribute(waterPositions, 3));
+    waterGeometry.setAttribute("color", new THREE.Float32BufferAttribute(waterColors, 3));
+    waterGeometry.setIndex(waterIndices);
+    waterGeometry.computeVertexNormals();
+    const water = new THREE.Mesh(waterGeometry, new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.22,
+        metalness: 0.08,
+        transparent: true,
+        opacity: 0.94,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    }));
+    water.receiveShadow = true;
+    scene.add(water);
+
+    for (let bankSide = 0; bankSide < 2; bankSide++) {
+        const bankGeometry = new THREE.BufferGeometry();
+        bankGeometry.setAttribute("position", new THREE.Float32BufferAttribute(bankPositions[bankSide], 3));
+        bankGeometry.setAttribute("color", new THREE.Float32BufferAttribute(bankColors[bankSide], 3));
+        bankGeometry.setIndex(bankIndices[bankSide]);
+        bankGeometry.computeVertexNormals();
+        const bank = new THREE.Mesh(bankGeometry, new THREE.MeshStandardMaterial({
+            vertexColors: true,
+            roughness: 1,
+            side: THREE.DoubleSide
+        }));
+        bank.receiveShadow = true;
+        scene.add(bank);
+    }
+
+    for (let i = 0; i < 12; i++) {
+        const highlight = new THREE.Mesh(
+            new THREE.SphereGeometry(0.72, 8, 5),
+            new THREE.MeshBasicMaterial({
+                color: 0xd4fff1,
+                transparent: true,
+                opacity: 0.5,
+                depthWrite: false
+            })
+        );
+        highlight.scale.set(1, 0.025, 0.12);
+        scene.add(highlight);
+        riverHighlights.push({
+            mesh: highlight,
+            curve,
+            progress: (i + 0.5) / 12,
+            speed: 0.006 + (i % 3) * 0.001
+        });
+    }
+
+    const riverStoneGeometry = new THREE.DodecahedronGeometry(0.32, 0);
+    const riverStoneMaterial = makeAnimeMaterial(0x9ca99a, { flatShading: true });
+    for (let i = 0; i < 26; i++) {
+        const t = (i + 0.4) / 26;
+        const point = curve.getPointAt(t);
+        const tangent = curve.getTangentAt(t);
+        const side = i % 2 ? -1 : 1;
+        const offset = 2.55 + Math.random() * 0.8;
+        const x = point.x - tangent.z * offset * side;
+        const z = point.z + tangent.x * offset * side;
+        const stone = new THREE.Mesh(riverStoneGeometry, riverStoneMaterial);
+        stone.position.set(x, terrainHeight(x, z) + 0.12, z);
+        stone.rotation.set(Math.random() * 0.3, Math.random() * Math.PI, Math.random() * 0.3);
+        stone.scale.set(0.7 + Math.random() * 0.8, 0.65 + Math.random() * 0.5, 0.8 + Math.random() * 0.7);
+        stone.castShadow = true;
+        scene.add(stone);
+    }
+}
+
 function createDistantHills() {
     const colors = [0x668eb0, 0x79a4b9, 0x8db6bc];
     for (let i = 0; i < 20; i++) {
         const angle = (i / 20) * Math.PI * 2 + Math.random() * 0.12;
-        const radius = 135 + Math.random() * 20;
-        const height = 24 + Math.random() * 26;
-        const width = 24 + Math.random() * 18;
+        const radius = WORLD_HALF_SIZE * 1.28 + Math.random() * 25;
+        const height = 30 + Math.random() * 30;
+        const width = 34 + Math.random() * 22;
         const hill = new THREE.Mesh(
             new THREE.ConeGeometry(width, height, 8),
             makeAnimeMaterial(colors[i % colors.length], { flatShading: true })
@@ -519,11 +688,11 @@ function createGroundCover() {
     const grassPalette = [0x4ea844, 0x6bc44e, 0x8cd65a, 0x3d9456, 0xb6e262];
     let count = 0;
     let attempts = 0;
-    while (count < 16000 && attempts < 40000) {
+    while (count < 24000 && attempts < 60000) {
         attempts++;
-        const x = (Math.random() - 0.5) * 175;
-        const z = (Math.random() - 0.5) * 175;
-        if (Math.hypot(x, z) < 5.5 || isNearPath(x, z, 1.1) || isNearPond(x, z, 2.2)) continue;
+        const x = (Math.random() - 0.5) * WORLD_HALF_SIZE * 1.67;
+        const z = (Math.random() - 0.5) * WORLD_HALF_SIZE * 1.67;
+        if (Math.hypot(x, z) < 5.5 || isNearPath(x, z, 1.1) || isNearPond(x, z, 2.2) || isNearRiver(x, z, 1.2)) continue;
         dummy.position.set(x, terrainHeight(x, z), z);
         dummy.rotation.set(0, Math.random() * Math.PI, (Math.random() - 0.5) * 0.15);
         dummy.scale.set(0.7 + Math.random() * 1.2, 0.7 + Math.random() * 1.1, 0.7 + Math.random() * 1.2);
@@ -554,10 +723,10 @@ function createWildflowers() {
     const palette = [0xff99c2, 0xffeb8e, 0xffffff, 0xf6a6e2, 0xc8a8ff, 0x79d7ff];
     for (let i = 0; i < flowerCount; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 12 + Math.random() * 58;
+        const radius = 12 + Math.random() * 88;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
-        if (isNearPath(x, z, 2.2) || isNearPond(x, z, 1.5)) {
+        if (isNearPath(x, z, 2.2) || isNearPond(x, z, 1.5) || isNearRiver(x, z, 2.4)) {
             i--;
             continue;
         }
@@ -589,8 +758,9 @@ function createWildflowers() {
 
 // Bếp lửa trại bập bùng
 const fireParticles = [];
-function createFire() {
+function createFire(x = 0, z = 0, base = true, fuelUntil = Date.now() + 180000) {
     const group = new THREE.Group();
+    const particles = [];
     const logMaterial = makeAnimeMaterial(0x563a28, { flatShading: true });
     for (const angle of [Math.PI / 4, -Math.PI / 4]) {
         const log = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 2.2, 7), logMaterial);
@@ -619,11 +789,39 @@ function createFire() {
         );
         particle.position.set((Math.random() - 0.5) * 0.7, Math.random() * 1.5, (Math.random() - 0.5) * 0.7);
         group.add(particle);
-        fireParticles.push({ mesh: particle, speed: 0.8 + Math.random() * 0.9, maxH: 1.8 + Math.random() * 1.2 });
+        particles.push({ mesh: particle, speed: 0.8 + Math.random() * 0.9, maxH: 1.8 + Math.random() * 1.2 });
     }
-    group.position.set(0, terrainHeight(0, 0), 0);
+    group.position.set(x, terrainHeight(x, z), z);
     scene.add(group);
-    return { group, flame, light };
+    const fire = { group, flame, light, x, z, base, fuelUntil };
+    particles.forEach(particle => {
+        particle.fire = fire;
+        fireParticles.push(particle);
+    });
+    setFireLit(fire, base || fuelUntil > Date.now());
+    return fire;
+}
+
+function setFireLit(fire, lit) {
+    fire.lit = lit;
+    fire.flame.visible = lit;
+    fire.light.visible = lit;
+    fire.light.intensity = lit ? (currentTimeMode === "night" ? 3.4 : 2.2) : 0;
+    for (const particle of fireParticles) {
+        if (particle.fire === fire) particle.mesh.visible = lit;
+    }
+}
+
+function addFuelVisual(fire) {
+    const log = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.2, 1.25, 6),
+        makeAnimeMaterial(0x71472e, { flatShading: true })
+    );
+    log.rotation.z = Math.PI / 2;
+    log.rotation.y = Math.random() * 0.5;
+    log.position.set((Math.random() - 0.5) * 0.28, 0.28, (Math.random() - 0.5) * 0.28);
+    log.castShadow = true;
+    fire.group.add(log);
 }
 
 function dressCampfire() {
@@ -748,7 +946,7 @@ function createTree(x, z, broadleaf, cherryBlossom = false) {
     tree.add(canopy);
 
     tree.position.set(x, terrainHeight(x, z), z);
-    tree.scale.setScalar(0.75 + Math.random() * 0.7);
+    tree.scale.setScalar(0.65 + Math.random() * 0.58);
     tree.rotation.y = Math.random() * Math.PI;
     tree.userData.windOffset = Math.random() * 30;
     scene.add(tree);
@@ -767,6 +965,7 @@ function createTent(x, z, color) {
     tent.add(body);
     tent.position.set(x, terrainHeight(x, z), z);
     scene.add(tent);
+    return tent;
 }
 
 function createLantern(x, z) {
@@ -903,9 +1102,9 @@ function createSakuraPetals() {
     const dummy = new THREE.Object3D();
 
     for (let i = 0; i < SAKURA_COUNT; i++) {
-        const x = (Math.random() - 0.5) * 160;
+        const x = (Math.random() - 0.5) * WORLD_HALF_SIZE * 1.6;
         const y = 8 + Math.random() * 26;
-        const z = (Math.random() - 0.5) * 160;
+        const z = (Math.random() - 0.5) * WORLD_HALF_SIZE * 1.6;
         dummy.position.set(x, y, z);
         dummy.scale.setScalar(0.7 + Math.random() * 0.7);
         dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
@@ -1927,17 +2126,16 @@ function togglePhotoMode(enter) {
     const uiLayer = document.getElementById("ui-layer");
     const photoHUD = document.getElementById("photo-mode-overlay");
     const touchControls = document.getElementById("touch-controls");
-    const touchInteract = document.getElementById("touch-interact");
 
     if (isPhotoMode) {
         uiLayer.style.display = "none";
         photoHUD.classList.remove("hidden");
         if (touchControls) touchControls.style.display = "none";
-        if (touchInteract) touchInteract.style.display = "none";
         showToast("📸 Đã bật Chế độ Ngắm cảnh & Chụp ảnh. Nhấn phím P hoặc Esc để thoát.");
     } else {
         uiLayer.style.display = "flex";
         photoHUD.classList.add("hidden");
+        if (touchControls) touchControls.style.display = "";
         showToast("Đã trở lại chế độ phiêu lưu.");
     }
 }
@@ -1957,7 +2155,500 @@ function takeScreenshot() {
 // ============================================================================
 const discoveries = [];
 let nearestDiscovery = null;
+let nearestForage = null;
+let nearestInteractable = null;
 let collected = new Set(readStorage(DISCOVERY_KEY, []));
+const DAILY_GATHER_GOAL = 4;
+const DAILY_VISIT_GOAL = 2;
+const forageTypes = {
+    flower: { label: "Hoa dại", icon: "🌼", color: 0xff9fca },
+    pinecone: { label: "Hạt thông", icon: "🌰", color: 0xb77b4b },
+    firefly: { label: "Đom đóm", icon: "✨", color: 0xffe890 },
+    wood: { label: "Củi", icon: "🪵", color: 0x9a6842 },
+    fish: { label: "Cá tươi", icon: "🐟", color: 0x78b9d1 },
+    meat: { label: "Thịt sống", icon: "🥩", color: 0xd87970 }
+};
+const backpackItems = {
+    tent: { label: "Lều cắm trại", icon: "⛺", description: "Dựng lều ở gần nhân vật." },
+    wood: { label: "Củi", icon: "🪵", description: "Dùng 3 khúc để nhóm bếp mới; thêm 1 khúc để giữ lửa." },
+    fish: { label: "Cá tươi", icon: "🐟", description: "Nướng tại bếp lửa để nhận cá nướng." },
+    meat: { label: "Thịt sống", icon: "🥩", description: "Nướng tại bếp lửa để nhận thịt nướng." },
+    cookedFish: { label: "Cá nướng", icon: "🍢", description: "Bữa ăn đã sẵn sàng trong ba lô." },
+    cookedMeat: { label: "Thịt nướng", icon: "🍖", description: "Bữa ăn đã sẵn sàng trong ba lô." }
+};
+const defaultSupplies = { tent: 1, wood: 4, fish: 1, meat: 1, cookedFish: 0, cookedMeat: 0 };
+
+function getLocalDateKey() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function createDailyState(date = getLocalDateKey()) {
+    return { date, gathered: 0, visits: 0, claimedGather: false, claimedVisits: false };
+}
+
+function loadCampState() {
+    const saved = readStorage(CAMP_KEY, {});
+    const savedState = saved && typeof saved === "object" ? saved : {};
+    const inventory = savedState.inventory && typeof savedState.inventory === "object" ? savedState.inventory : {};
+    const daily = savedState.daily && savedState.daily.date === getLocalDateKey() ? savedState.daily : createDailyState();
+    const gathered = Number.isFinite(daily.gathered) ? Math.floor(daily.gathered) : 0;
+    const visits = Number.isFinite(daily.visits) ? Math.floor(daily.visits) : 0;
+    return {
+        inventory: {
+            ...Object.fromEntries(Object.keys(forageTypes).map(type => [
+                type,
+                Number.isFinite(inventory[type]) ? Math.max(0, Math.floor(inventory[type])) : 0
+            ])),
+            ...Object.fromEntries(Object.entries(defaultSupplies).map(([type, count]) => [
+                type,
+                Number.isFinite(inventory[type]) ? Math.max(0, Math.floor(inventory[type])) : count
+            ]))
+        },
+        leaves: Number.isFinite(savedState.leaves) ? Math.max(0, Math.floor(savedState.leaves)) : 0,
+        upgradeLevel: Number.isFinite(savedState.upgradeLevel) ? THREE.MathUtils.clamp(Math.floor(savedState.upgradeLevel), 0, 3) : 0,
+        tents: Array.isArray(savedState.tents) ? savedState.tents.filter(site => Number.isFinite(site?.x) && Number.isFinite(site?.z)).slice(-20) : [],
+        campfires: Array.isArray(savedState.campfires) ? savedState.campfires.filter(site => Number.isFinite(site?.x) && Number.isFinite(site?.z) && Number.isFinite(site.fuelUntil)).slice(-10) : [],
+        cooking: Array.isArray(savedState.cooking) ? savedState.cooking.filter(job =>
+            ["fish", "meat"].includes(job?.type) && Number.isFinite(job.readyAt) && Number.isFinite(job.x) && Number.isFinite(job.z)
+        ).slice(-10) : [],
+        hunger: Number.isFinite(savedState.hunger) ? THREE.MathUtils.clamp(savedState.hunger, 0, 100) : 100,
+        daily: {
+            ...createDailyState(daily.date),
+            gathered: Math.min(DAILY_GATHER_GOAL, Math.max(0, gathered)),
+            visits: Math.min(DAILY_VISIT_GOAL, Math.max(0, visits)),
+            claimedGather: daily.claimedGather === true,
+            claimedVisits: daily.claimedVisits === true
+        }
+    };
+}
+
+let campState = loadCampState();
+const campUpgradeRecipes = [
+    { name: "Thắp đèn lồng quanh trại", cost: { leaves: 1, flower: 2, pinecone: 1 } },
+    { name: "Trồng vườn hoa nhỏ", cost: { leaves: 2, flower: 3, firefly: 2 } },
+    { name: "Ươm Cổ Thụ Ước Nguyện", cost: { leaves: 3, pinecone: 4, firefly: 3 } }
+];
+const forageItems = [];
+const campfireSites = [];
+const cookingJobs = [];
+
+for (const job of campState.cooking) {
+    const cookedType = job.type === "fish" ? "cookedFish" : "cookedMeat";
+    if (job.readyAt <= Date.now()) {
+        campState.inventory[cookedType] += 1;
+    } else {
+        cookingJobs.push({ ...job, mesh: null });
+    }
+}
+campState.cooking = cookingJobs.map(({ type, readyAt, x, z }) => ({ type, readyAt, x, z }));
+saveStorage(CAMP_KEY, campState);
+
+function saveCampState() {
+    saveStorage(CAMP_KEY, campState);
+}
+
+function completeDailyQuest(kind) {
+    const isGatherQuest = kind === "gathered";
+    const progressKey = isGatherQuest ? "gathered" : "visits";
+    const claimKey = isGatherQuest ? "claimedGather" : "claimedVisits";
+    const goal = isGatherQuest ? DAILY_GATHER_GOAL : DAILY_VISIT_GOAL;
+    if (campState.daily[claimKey]) return;
+
+    campState.daily[progressKey] = Math.min(goal, campState.daily[progressKey] + 1);
+    let completed = false;
+    if (campState.daily[progressKey] === goal) {
+        campState.daily[claimKey] = true;
+        campState.leaves += 2;
+        completed = true;
+    }
+    saveCampState();
+    updateCampUI();
+    return completed;
+}
+
+function updateCampUI() {
+    const inventoryList = document.getElementById("inventory-list");
+    const leafCount = document.getElementById("leaf-count");
+    const gatherQuest = document.getElementById("daily-gather-quest");
+    const visitQuest = document.getElementById("daily-visit-quest");
+    const upgradeButton = document.getElementById("camp-upgrade");
+    const upgradeCost = document.getElementById("camp-upgrade-cost");
+    if (inventoryList) {
+        inventoryList.textContent = ["tent", "wood", "fish", "meat"]
+            .map(type => `${backpackItems[type].icon} ${campState.inventory[type]}`)
+            .join("   ");
+    }
+    if (leafCount) leafCount.textContent = String(campState.leaves);
+    if (gatherQuest) {
+        gatherQuest.textContent = `${campState.daily.claimedGather ? "✓" : "○"} Nhặt ${DAILY_GATHER_GOAL} vật phẩm (${campState.daily.gathered}/${DAILY_GATHER_GOAL}) · thưởng 2 lá`;
+    }
+    if (visitQuest) {
+        visitQuest.textContent = `${campState.daily.claimedVisits ? "✓" : "○"} Ghé ${DAILY_VISIT_GOAL} danh lam (${campState.daily.visits}/${DAILY_VISIT_GOAL}) · thưởng 2 lá`;
+    }
+    if (!upgradeButton || !upgradeCost) return;
+
+    const recipe = campUpgradeRecipes[campState.upgradeLevel];
+    if (!recipe) {
+        upgradeButton.textContent = "✨ Khu trại đã được trang trí hoàn chỉnh";
+        upgradeButton.disabled = true;
+        upgradeCost.textContent = "Hãy quay lại mỗi ngày để khám phá thêm.";
+        return;
+    }
+
+    const requirements = Object.entries(recipe.cost)
+        .map(([item, amount]) => item === "leaves"
+            ? `${amount} lá`
+            : `${amount} ${forageTypes[item].icon}`)
+        .join(" · ");
+    const hasMaterials = Object.entries(recipe.cost).every(([item, amount]) =>
+        item === "leaves" ? campState.leaves >= amount : campState.inventory[item] >= amount
+    );
+    upgradeButton.textContent = `🛠 ${recipe.name}`;
+    upgradeButton.disabled = !hasMaterials;
+    upgradeCost.textContent = `Cần: ${requirements}`;
+    renderBackpack();
+}
+
+function toggleBackpack(open = document.getElementById("backpack-modal")?.hidden) {
+    const modal = document.getElementById("backpack-modal");
+    if (!modal) return;
+    modal.hidden = !open;
+    releaseKeys();
+    if (open) {
+        renderBackpack();
+        document.getElementById("btn-close-backpack")?.focus();
+    } else {
+        document.getElementById("btn-backpack")?.focus();
+    }
+}
+
+function findNearbyFire(maxDistance = 6, includeUnlit = false) {
+    let nearest = null;
+    for (const fire of campfireSites) {
+        const lit = fire.base || fire.fuelUntil > Date.now();
+        if (!lit && !includeUnlit) continue;
+        const distance = Math.hypot(localPos.x - fire.x, localPos.z - fire.z);
+        if (distance <= maxDistance && (!nearest || distance < nearest.distance)) {
+            nearest = { fire, distance };
+        }
+    }
+    return nearest?.fire || null;
+}
+
+function getPlacementPosition(distance = 3.8) {
+    const heading = (localPlayerMesh?.rotation.y || 0) - PLAYER_MODEL_FACING_OFFSET;
+    const offsets = [0, Math.PI / 2, -Math.PI / 2, Math.PI];
+    for (const offset of offsets) {
+        const angle = heading + offset;
+        const x = THREE.MathUtils.clamp(localPos.x + Math.sin(angle) * distance, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT);
+        const z = THREE.MathUtils.clamp(localPos.z + Math.cos(angle) * distance, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT);
+        if (!canMoveToForestPosition(x, z)) continue;
+        if (campState.tents.some(tent => Math.hypot(tent.x - x, tent.z - z) < 4)) continue;
+        if (campfireSites.some(fire => !fire.base && Math.hypot(fire.x - x, fire.z - z) < 4)) continue;
+        return { x, z };
+    }
+    return null;
+}
+
+function persistCampfire(fire) {
+    const savedFire = campState.campfires.find(site => site.id === fire.id);
+    if (savedFire) savedFire.fuelUntil = fire.fuelUntil;
+    saveCampState();
+}
+
+function updateBackpackLocation() {
+    const location = document.getElementById("backpack-location");
+    if (!location) return;
+    const fire = findNearbyFire();
+    const nearbyColdFire = fire || findNearbyFire(6, true);
+    location.textContent = fire
+        ? "🔥 Đang ở gần bếp lửa · có thể nướng thức ăn."
+        : nearbyColdFire
+            ? "🪵 Bếp đã tắt · dùng củi để nhóm lửa lại."
+            : "🌲 Hãy dựng bếp bằng 3 khúc củi để nướng thức ăn.";
+}
+
+function canUseBackpackItem(type) {
+    const count = campState.inventory[type] || 0;
+    if (count <= 0) return false;
+    if (type === "wood") return Boolean(findNearbyFire(6, true)) || count >= 3;
+    if (type === "fish" || type === "meat") return Boolean(findNearbyFire());
+    if (type === "cookedFish" || type === "cookedMeat") return campState.hunger < 100;
+    return type === "tent";
+}
+
+function renderBackpack() {
+    const list = document.getElementById("backpack-items");
+    const modal = document.getElementById("backpack-modal");
+    if (!list || !modal || modal.hidden) return;
+
+    list.replaceChildren();
+    for (const [type, item] of Object.entries(backpackItems)) {
+        const count = campState.inventory[type] || 0;
+        const card = document.createElement("article");
+        card.className = "backpack-item";
+        const info = document.createElement("div");
+        info.className = "backpack-item-info";
+        const icon = document.createElement("span");
+        icon.className = "backpack-item-icon";
+        icon.textContent = item.icon;
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = `${item.label} · ${count}`;
+        const description = document.createElement("p");
+        description.textContent = item.description;
+        copy.append(title, description);
+        info.append(icon, copy);
+        const useButton = document.createElement("button");
+        useButton.className = "backpack-use";
+        useButton.type = "button";
+        useButton.dataset.item = type;
+        useButton.textContent = type === "cookedFish" || type === "cookedMeat" ? "Ăn" : "Dùng";
+        useButton.disabled = !canUseBackpackItem(type);
+        card.append(info, useButton);
+        list.append(card);
+    }
+    const hint = document.getElementById("backpack-hint");
+    if (hint) hint.textContent = `🍃 No bụng ${Math.round(campState.hunger)}% · đi bộ sẽ tiêu hao thể lực, ăn món nướng để hồi sức.`;
+    updateBackpackLocation();
+}
+
+function createCookingVisual(type, fire, index, cooked = false) {
+    const skewer = new THREE.Group();
+    const stick = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.025, 0.035, 1.15, 5),
+        makeAnimeMaterial(0x9a6842)
+    );
+    stick.rotation.z = Math.PI / 2;
+    skewer.add(stick);
+    const foodColor = type === "fish"
+        ? cooked ? 0xb87943 : 0x78b9d1
+        : cooked ? 0x9a5637 : 0xd87970;
+    const food = new THREE.Mesh(
+        type === "fish" ? new THREE.SphereGeometry(0.22, 8, 6) : new THREE.BoxGeometry(0.48, 0.32, 0.4),
+        makeAnimeMaterial(foodColor, { flatShading: true })
+    );
+    food.position.set(-0.1, 0, 0);
+    skewer.add(food);
+    skewer.position.set(0.95 + (index % 3) * 0.24, 0.8, 0.38 + Math.floor(index / 3) * 0.24);
+    skewer.rotation.y = Math.PI / 2;
+    fire.group.add(skewer);
+    return skewer;
+}
+
+function useBackpackItem(type) {
+    if (!canUseBackpackItem(type)) {
+        updateBackpackLocation();
+        return;
+    }
+
+    if (type === "tent") {
+        const position = getPlacementPosition();
+        if (!position) {
+            showToast("Không đủ chỗ dựng lều ở đây. Hãy bước ra khu đất trống nhé.");
+            return;
+        }
+        campState.inventory.tent -= 1;
+        const rotation = (localPlayerMesh?.rotation.y || 0) - PLAYER_MODEL_FACING_OFFSET;
+        const tent = createTent(position.x, position.z, localPlayerColor);
+        tent.rotation.y = rotation;
+        campState.tents.push({ ...position, rotation });
+        showToast("⛺ Đã dựng lều ở phía trước bạn!");
+    } else if (type === "wood") {
+        const nearbyFire = findNearbyFire(6, true);
+        if (nearbyFire) {
+            campState.inventory.wood -= 1;
+            if (!nearbyFire.base) {
+                nearbyFire.fuelUntil = Math.max(Date.now(), nearbyFire.fuelUntil) + 90000;
+                persistCampfire(nearbyFire);
+                setFireLit(nearbyFire, true);
+            } else {
+                saveCampState();
+            }
+            addFuelVisual(nearbyFire);
+            showToast("🔥 Bạn đã thêm củi, lửa trại bập bùng ấm hơn.");
+        } else {
+            if (campState.inventory.wood < 3) return;
+            const position = getPlacementPosition();
+            if (!position) {
+                showToast("Không đủ chỗ nhóm bếp ở đây. Hãy tìm một khoảng đất trống.");
+                return;
+            }
+            campState.inventory.wood -= 3;
+            const fire = createFire(position.x, position.z, false);
+            fire.id = `campfire-${Date.now()}`;
+            campfireSites.push(fire);
+            campState.campfires.push({ id: fire.id, x: fire.x, z: fire.z, fuelUntil: fire.fuelUntil });
+            showToast("🔥 Đã nhóm bếp lửa trại! Củi sẽ cháy trong khoảng 3 phút.");
+        }
+    } else if (type === "fish" || type === "meat") {
+        const fire = findNearbyFire();
+        if (!fire) return;
+        campState.inventory[type] -= 1;
+        const readyAt = Date.now() + 5000;
+        const job = { type, readyAt, x: fire.x, z: fire.z, mesh: null };
+        job.mesh = createCookingVisual(type, fire, cookingJobs.length);
+        cookingJobs.push(job);
+        campState.cooking.push({ type, readyAt, x: fire.x, z: fire.z });
+        showToast(`🍢 Đang nướng ${backpackItems[type].label.toLowerCase()}...`);
+    } else if (type === "cookedFish" || type === "cookedMeat") {
+        campState.inventory[type] -= 1;
+        campState.hunger = Math.min(100, campState.hunger + (type === "cookedMeat" ? 45 : 30));
+        showToast(`😋 Bạn đã ăn ${backpackItems[type].label.toLowerCase()}, thể lực hồi phục.`);
+    }
+
+    saveCampState();
+    updateCampUI();
+}
+
+function updateCookingJobs(now) {
+    let changed = false;
+    for (let index = cookingJobs.length - 1; index >= 0; index--) {
+        const job = cookingJobs[index];
+        if (!job.mesh) {
+            const fire = campfireSites.find(site => site.x === job.x && site.z === job.z);
+            if (fire) job.mesh = createCookingVisual(job.type, fire, index);
+        }
+        if (now < job.readyAt) continue;
+        const cookedType = job.type === "fish" ? "cookedFish" : "cookedMeat";
+        campState.inventory[cookedType] += 1;
+        campState.cooking = campState.cooking.filter(savedJob => savedJob.readyAt !== job.readyAt || savedJob.type !== job.type);
+        if (job.mesh) {
+            job.mesh.parent?.remove(job.mesh);
+            job.mesh.traverse(node => {
+                if (!node.isMesh) return;
+                node.geometry.dispose();
+                if (Array.isArray(node.material)) node.material.forEach(material => material.dispose());
+                else node.material.dispose();
+            });
+        }
+        cookingJobs.splice(index, 1);
+        changed = true;
+        showToast(`✨ ${backpackItems[cookedType].label} đã chín! Mở ba lô để ăn.`);
+    }
+    if (changed) {
+        saveCampState();
+        updateCampUI();
+    }
+}
+
+function createCampUpgradeVisual(level) {
+    if (level === 1) {
+        createLantern(0, 8);
+        createLantern(0, -8);
+    } else if (level === 2) {
+        const stemGeometry = new THREE.CylinderGeometry(0.025, 0.035, 0.34, 5);
+        const petalGeometry = new THREE.SphereGeometry(0.095, 7, 6);
+        const centerGeometry = new THREE.SphereGeometry(0.055, 7, 6);
+        const stemMaterial = makeAnimeMaterial(0x5a9a54);
+        const petalMaterial = makeAnimeMaterial(0xff9fca);
+        const centerMaterial = makeAnimeMaterial(0xffe38b);
+        for (let i = 0; i < 8; i++) {
+            const angle = i / 8 * Math.PI * 2;
+            const x = Math.cos(angle) * 5.2;
+            const z = Math.sin(angle) * 5.2;
+            const flower = new THREE.Group();
+            const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+            stem.position.y = 0.17;
+            flower.add(stem);
+            for (let petal = 0; petal < 5; petal++) {
+                const blossom = new THREE.Mesh(petalGeometry, petalMaterial);
+                const petalAngle = petal / 5 * Math.PI * 2;
+                blossom.position.set(Math.cos(petalAngle) * 0.13, 0.37, Math.sin(petalAngle) * 0.13);
+                flower.add(blossom);
+            }
+            const center = new THREE.Mesh(centerGeometry, centerMaterial);
+            center.position.y = 0.37;
+            flower.add(center);
+            flower.position.set(x, terrainHeight(x, z), z);
+            scene.add(flower);
+        }
+    } else if (level === 3) {
+        const tree = createTree(-11, 10, true, true);
+        tree.scale.setScalar(1.35);
+    }
+}
+
+function createForageVisual(type) {
+    const group = new THREE.Group();
+    if (type === "flower") {
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.45, 5), makeAnimeMaterial(0x57934b));
+        stem.position.y = 0.22;
+        group.add(stem);
+        const petalMaterial = makeAnimeMaterial(forageTypes.flower.color);
+        for (let i = 0; i < 5; i++) {
+            const angle = i / 5 * Math.PI * 2;
+            const petal = new THREE.Mesh(new THREE.SphereGeometry(0.095, 7, 6), petalMaterial);
+            petal.position.set(Math.cos(angle) * 0.12, 0.48, Math.sin(angle) * 0.12);
+            group.add(petal);
+        }
+        const center = new THREE.Mesh(new THREE.SphereGeometry(0.06, 7, 6), makeAnimeMaterial(0xffe38b));
+        center.position.y = 0.48;
+        group.add(center);
+    } else if (type === "pinecone") {
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.48, 7), makeAnimeMaterial(forageTypes.pinecone.color, { flatShading: true }));
+        cone.position.y = 0.24;
+        cone.rotation.x = Math.PI;
+        group.add(cone);
+    } else if (type === "wood") {
+        const material = makeAnimeMaterial(forageTypes.wood.color, { flatShading: true });
+        for (let i = 0; i < 3; i++) {
+            const log = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.75, 6), material);
+            log.rotation.z = Math.PI / 2;
+            log.rotation.y = (i - 1) * 0.42;
+            log.position.set(0, 0.12 + i * 0.12, (i - 1) * 0.13);
+            group.add(log);
+        }
+    } else if (type === "fish") {
+        const material = makeAnimeMaterial(forageTypes.fish.color, { flatShading: true });
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), material);
+        body.scale.set(1.35, 0.68, 0.55);
+        body.position.y = 0.3;
+        group.add(body);
+        const tail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.32, 4), material);
+        tail.rotation.z = Math.PI / 2;
+        tail.position.set(-0.4, 0.3, 0);
+        group.add(tail);
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 5), new THREE.MeshBasicMaterial({ color: 0x20323a }));
+        eye.position.set(0.36, 0.34, 0.12);
+        group.add(eye);
+    } else if (type === "meat") {
+        const meat = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.27, 0),
+            makeAnimeMaterial(forageTypes.meat.color, { flatShading: true })
+        );
+        meat.position.y = 0.3;
+        meat.scale.set(1.15, 0.78, 0.9);
+        group.add(meat);
+        const boneMaterial = new THREE.MeshBasicMaterial({ color: 0xffe6ce });
+        for (const side of [-1, 1]) {
+            const bone = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), boneMaterial);
+            bone.position.set(side * 0.3, 0.32, 0);
+            group.add(bone);
+        }
+    } else {
+        const glow = new THREE.Mesh(
+            new THREE.SphereGeometry(0.2, 10, 8),
+            new THREE.MeshBasicMaterial({ color: forageTypes.firefly.color, transparent: true, opacity: 0.22 })
+        );
+        const light = new THREE.Mesh(
+            new THREE.SphereGeometry(0.09, 8, 6),
+            new THREE.MeshBasicMaterial({ color: forageTypes.firefly.color })
+        );
+        glow.position.y = 0.48;
+        light.position.y = 0.48;
+        group.add(glow, light);
+    }
+    return group;
+}
+
+function makeForage(id, type, x, z) {
+    const mesh = createForageVisual(type);
+    mesh.position.set(x, terrainHeight(x, z), z);
+    scene.add(mesh);
+    forageItems.push({ id, type, x, z, mesh, respawnAt: 0, baseY: mesh.position.y });
+}
 
 function makeMarker(id, x, z, title, description) {
     const group = new THREE.Group();
@@ -1965,16 +2656,17 @@ function makeMarker(id, x, z, title, description) {
     stem.position.y = 0.9;
     group.add(stem);
 
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: collected.has(id) ? 0xa6c989 : 0xffe289, transparent: true, opacity: 0.75 });
     const glow = new THREE.Mesh(
         new THREE.SphereGeometry(0.48, 12, 10),
-        new THREE.MeshBasicMaterial({ color: 0xffe289, transparent: true, opacity: 0.75 })
+        glowMaterial
     );
     glow.position.y = 2.0;
     group.add(glow);
 
     const ring = new THREE.Mesh(
         new THREE.TorusGeometry(0.72, 0.035, 5, 24),
-        new THREE.MeshBasicMaterial({ color: 0xfff0b8, transparent: true, opacity: 0.7 })
+        new THREE.MeshBasicMaterial({ color: collected.has(id) ? 0xa6c989 : 0xfff0b8, transparent: true, opacity: 0.7 })
     );
     ring.position.y = 2.0;
     ring.rotation.x = Math.PI / 2;
@@ -1983,7 +2675,7 @@ function makeMarker(id, x, z, title, description) {
     group.add(new THREE.PointLight(0xffc777, 0.8, 6));
     group.position.set(x, terrainHeight(x, z), z);
     scene.add(group);
-    discoveries.push({ id, x, z, title, description, mesh: group, glow, ring, baseY: group.position.y, found: false });
+    discoveries.push({ id, x, z, title, description, mesh: group, glow, ring, baseY: group.position.y, found: collected.has(id) });
 }
 
 // ============================================================================
@@ -2078,7 +2770,7 @@ function scatterForestAssets(prototypes, count, options = {}) {
     if (!prototypes.length || count <= 0) return [];
     const placements = [];
     const minRadius = options.minRadius ?? 20;
-    const maxRadius = options.maxRadius ?? 80;
+    const maxRadius = options.maxRadius ?? 120;
     const clusterRadius = options.clusterRadius || 0;
     const minSpacing = options.minSpacing || 0;
     const spacingCells = new Map();
@@ -2106,7 +2798,8 @@ function scatterForestAssets(prototypes, count, options = {}) {
 
         if (Math.hypot(x - 5, z - 5) < (options.campClearance || 14)
             || isNearPath(x, z, options.pathClearance ?? 3)
-            || isNearPond(x, z, options.pondClearance ?? 2)) continue;
+            || isNearPond(x, z, options.pondClearance ?? 2)
+            || isNearRiver(x, z, options.riverClearance ?? 1.8)) continue;
         if (minSpacing) {
             const cellX = Math.floor(x / minSpacing);
             const cellZ = Math.floor(z / minSpacing);
@@ -2147,7 +2840,7 @@ function scatterForestGrid(prototypes, options = {}) {
     const placements = [];
     const spacing = options.spacing || 10.5;
     const jitter = options.jitter || 2.6;
-    const bounds = options.bounds || 98;
+    const bounds = options.bounds || WORLD_PLAYER_LIMIT;
 
     for (let x = -bounds + spacing / 2; x <= bounds - spacing / 2; x += spacing) {
         for (let z = -bounds + spacing / 2; z <= bounds - spacing / 2; z += spacing) {
@@ -2155,7 +2848,8 @@ function scatterForestGrid(prototypes, options = {}) {
             const placementZ = z + (Math.random() * 2 - 1) * jitter;
             if (Math.hypot(placementX - 5, placementZ - 5) < 16
                 || isNearPath(placementX, placementZ, 2.8)
-                || isNearPond(placementX, placementZ, 1.8)) continue;
+                || isNearPond(placementX, placementZ, 1.8)
+                || isNearRiver(placementX, placementZ, 2.2)) continue;
 
             const prototypeIndex = Math.floor(Math.random() * prototypes.length);
             const scale = options.scaleMin + Math.random() * (options.scaleMax - options.scaleMin);
@@ -2207,7 +2901,7 @@ async function buildImportedForest() {
         treePrototypes.push(...createForestPrototypes(
             root,
             index === 0 ? /^Tree_[123]$/i : index === 1 ? /^\d{2}-tree-root$/i : /^Tree_0[1-5](?:\.\d+)?$/i,
-            [16, 22]
+            [13, 18]
         ));
         if (index === 0) {
             mushroomPrototypes.push(...createForestPrototypes(root, /^Mushroom(?:\.\d+)?$/i, [0.35, 0.75]));
@@ -2229,35 +2923,35 @@ async function buildImportedForest() {
     }
 
     forestTreeLocations.push(...scatterForestGrid(treePrototypes, {
-        bounds: 98, spacing: 10.5, jitter: 2.6,
-        scaleMin: 0.82, scaleMax: 1.2, castShadow: true
+        bounds: WORLD_PLAYER_LIMIT, spacing: 10.5, jitter: 2.6,
+        scaleMin: 0.78, scaleMax: 1.1, castShadow: true
     }));
     scatterForestAssets(bushPrototypes, 42, {
-        minRadius: 21, maxRadius: 76, clusterRadius: 8,
+        minRadius: 21, maxRadius: 112, clusterRadius: 8,
         scaleMin: 0.75, scaleMax: 1.2
     });
     scatterForestAssets(mushroomPrototypes, 115, {
-        minRadius: 19, maxRadius: 77, clusterRadius: 5.2,
+        minRadius: 19, maxRadius: 114, clusterRadius: 5.2,
         minSpacing: 1.25, scaleMin: 0.75, scaleMax: 1.45
     });
     scatterForestAssets(stonePrototypes, 48, {
-        minRadius: 20, maxRadius: 78, clusterRadius: 7,
+        minRadius: 20, maxRadius: 116, clusterRadius: 7,
         minSpacing: 2, scaleMin: 0.65, scaleMax: 1.2
     });
     scatterForestAssets(stumpPrototypes, 28, {
-        minRadius: 20, maxRadius: 75, clusterRadius: 6,
+        minRadius: 20, maxRadius: 112, clusterRadius: 6,
         minSpacing: 2.8, scaleMin: 0.75, scaleMax: 1.25
     });
     scatterForestAssets(barkPrototypes, 16, {
-        minRadius: 20, maxRadius: 75, clusterRadius: 6,
+        minRadius: 20, maxRadius: 112, clusterRadius: 6,
         minSpacing: 3, scaleMin: 0.7, scaleMax: 1.15
     });
     scatterForestAssets(flowerPrototypes, 70, {
-        minRadius: 13, maxRadius: 70, clusterRadius: 4.5,
+        minRadius: 13, maxRadius: 104, clusterRadius: 4.5,
         minSpacing: 1.2, scaleMin: 0.7, scaleMax: 1.2
     });
     scatterForestAssets(grassPrototypes, 55, {
-        minRadius: 15, maxRadius: 75, clusterRadius: 3.5,
+        minRadius: 15, maxRadius: 112, clusterRadius: 3.5,
         minSpacing: 1.1, scaleMin: 0.7, scaleMax: 1.3
     });
     if (minePrototypes.length) {
@@ -2266,12 +2960,12 @@ async function buildImportedForest() {
 }
 
 function createProceduralForestFallback() {
-    for (let i = 0; i < 220; i++) {
+    for (let i = 0; i < 400; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 19 + Math.random() * 70;
+        const radius = 19 + Math.random() * 100;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
-        if (Math.hypot(x - 5, z - 5) < 13 || isNearPath(x, z, 4.2) || isNearPond(x, z, 2.5)) continue;
+        if (Math.hypot(x - 5, z - 5) < 13 || isNearPath(x, z, 4.2) || isNearPond(x, z, 2.5) || isNearRiver(x, z, 2.5)) continue;
         const broadleaf = Math.random() > 0.22;
         createTree(x, z, broadleaf, broadleaf && Math.random() > 0.32);
     }
@@ -2281,10 +2975,11 @@ function createProceduralForestFallback() {
 // KHỞI TẠO THẾ GIỚI (WORLD BUILDING)
 // ============================================================================
 const campfire = createFire();
+campfireSites.push(campfire);
 dressCampfire();
 createSky();
 
-const groundGeometry = new THREE.PlaneGeometry(210, 210, 130, 130);
+const groundGeometry = new THREE.PlaneGeometry(WORLD_HALF_SIZE * 2, WORLD_HALF_SIZE * 2, 180, 180);
 groundGeometry.rotateX(-Math.PI / 2);
 const groundPositions = groundGeometry.attributes.position;
 const groundColors = [];
@@ -2318,6 +3013,7 @@ scene.add(ground);
 
 campPathRoutes.forEach(createTrail);
 createDistantHills();
+riverRoutes.forEach(createRiver);
 
 buildImportedForest().catch(error => {
     console.error("Không thể dựng rừng từ các file GLB:", error);
@@ -2335,6 +3031,20 @@ createFireflies();
 
 createTent(8, -5, 0xa85d50);
 createTent(-8, -5, 0x647d67);
+for (const tentSite of campState.tents) {
+    const tent = createTent(tentSite.x, tentSite.z, localPlayerColor);
+    tent.rotation.y = tentSite.rotation || 0;
+}
+for (const fireSite of campState.campfires) {
+    const fire = createFire(fireSite.x, fireSite.z, false, fireSite.fuelUntil);
+    fire.id = fireSite.id;
+    campfireSites.push(fire);
+}
+for (let index = 0; index < cookingJobs.length; index++) {
+    const job = cookingJobs[index];
+    const fire = campfireSites.find(site => site.x === job.x && site.z === job.z);
+    if (fire) job.mesh = createCookingVisual(job.type, fire, index);
+}
 for (const [x, z] of [[-2.8, -2.6], [2.8, -2.6], [-2.8, 2.6], [2.8, 2.6], [7, 0], [-7, 0]]) createLantern(x, z);
 
 pondSites.forEach(createPond);
@@ -2345,6 +3055,16 @@ makeMarker("pond", -16, -14, "Bến Hồ Gương", "Mặt hồ soi bóng mây tr
 makeMarker("wildflowers", 16, -17, "Thung Lũng Hoa Dại", "Cánh đồng hoa dại rực rỡ đung đưa trong gió. Đom đóm thường tụ về đây khi hoàng hôn buông xuống.");
 makeMarker("lookout", 25, 27, "Đài Vọng Cảnh", "Đỉnh đồi cao nhất đón trọn ánh bình minh và biển sao đêm. Hãy ước một điều ước.");
 makeMarker("sakura", 14, 18, "Cổ Thụ Anh Đào", "Tán hoa anh đào nghìn năm rực rỡ, những cánh hoa hồng bay lượn ngập tràn trong gió.");
+
+[
+    ["flower", -28, -8], ["flower", 22, -30], ["flower", 40, 16], ["flower", -34, 22],
+    ["pinecone", -12, 30], ["pinecone", 38, -12], ["pinecone", -44, -22], ["pinecone", 10, 32],
+    ["firefly", -30, -35], ["firefly", 30, 40], ["firefly", 45, 24], ["firefly", -42, 10],
+    ["wood", -34, -28], ["wood", 34, 34], ["wood", 50, -30], ["wood", -52, 16],
+    ["fish", -22, -18], ["fish", 32, -34], ["fish", 38, 42], ["fish", -40, 35],
+    ["meat", -48, -12], ["meat", 48, 12], ["meat", -16, 48], ["meat", 56, 38]
+].forEach(([type, x, z], index) => makeForage(`${type}-${index}`, type, x, z));
+for (let level = 1; level <= campState.upgradeLevel; level++) createCampUpgradeVisual(level);
 
 // ============================================================================
 // CONTROLS & EVENT LISTENERS
@@ -2358,6 +3078,8 @@ function releaseKeys() {
 
 window.addEventListener("keydown", event => {
     if (document.activeElement === document.getElementById("chat-input")) return;
+    if (!document.getElementById("backpack-modal")?.hidden
+        && !["Escape", "i", "I", "b", "B"].includes(event.key)) return;
 
     const key = keyMap[event.key];
     if (key) {
@@ -2373,7 +3095,9 @@ window.addEventListener("keydown", event => {
         showToast(isSitting ? "🧘 Đang ngồi nghỉ ngơi ngắm cảnh..." : "Đã đứng dậy.");
     }
     if (event.key === "p" || event.key === "P") togglePhotoMode();
-    if (event.key === "Escape" && isPhotoMode) togglePhotoMode(false);
+    if (event.key === "i" || event.key === "I" || event.key === "b" || event.key === "B") toggleBackpack();
+    if (event.key === "Escape" && !document.getElementById("backpack-modal")?.hidden) toggleBackpack(false);
+    else if (event.key === "Escape" && isPhotoMode) togglePhotoMode(false);
 });
 
 window.addEventListener("keyup", event => {
@@ -2383,6 +3107,16 @@ window.addEventListener("keyup", event => {
 
 // UI Buttons Event Listeners
 document.getElementById("btn-camera")?.addEventListener("click", () => togglePhotoMode(true));
+document.getElementById("btn-backpack")?.addEventListener("click", () => toggleBackpack());
+document.getElementById("touch-bag")?.addEventListener("click", () => toggleBackpack());
+document.getElementById("btn-close-backpack")?.addEventListener("click", () => toggleBackpack(false));
+document.getElementById("backpack-modal")?.addEventListener("click", event => {
+    if (event.target === event.currentTarget) toggleBackpack(false);
+});
+document.getElementById("backpack-items")?.addEventListener("click", event => {
+    const button = event.target.closest("button[data-item]");
+    if (button && !button.disabled) useBackpackItem(button.dataset.item);
+});
 document.getElementById("btn-snap-photo")?.addEventListener("click", takeScreenshot);
 document.getElementById("btn-exit-photo")?.addEventListener("click", () => togglePhotoMode(false));
 
@@ -2424,6 +3158,25 @@ document.getElementById("btn-tarot")?.addEventListener("click", () => {
     modal.classList.add("active");
 });
 
+document.getElementById("camp-upgrade")?.addEventListener("click", () => {
+    const recipe = campUpgradeRecipes[campState.upgradeLevel];
+    if (!recipe) return;
+    const canCraft = Object.entries(recipe.cost).every(([item, amount]) =>
+        item === "leaves" ? campState.leaves >= amount : campState.inventory[item] >= amount
+    );
+    if (!canCraft) return;
+
+    for (const [item, amount] of Object.entries(recipe.cost)) {
+        if (item === "leaves") campState.leaves -= amount;
+        else campState.inventory[item] -= amount;
+    }
+    campState.upgradeLevel += 1;
+    createCampUpgradeVisual(campState.upgradeLevel);
+    saveCampState();
+    updateCampUI();
+    showToast(`🏕️ ${recipe.name}! Khu trại của bạn ngày càng ấm cúng.`);
+});
+
 window.closeTarot = function() {
     document.getElementById("tarot-modal").classList.remove("active");
 };
@@ -2459,22 +3212,48 @@ function updateProgress() {
             ? "Bạn đã ghé thăm tất cả danh lam thắng cảnh trong thung lũng! Giờ hãy ngồi ngắm hoàng hôn và nghe nhạc nhé."
             : "Khám phá các đốm sáng ven hồ, thung lũng hoa và cổ thụ anh đào.";
     }
+    updateCampUI();
 }
 
 function interact() {
-    if (!nearestDiscovery) return;
+    if (!nearestInteractable) return;
     if (localPlayerMesh && localPlayerMesh.userData) localPlayerMesh.userData.gestureTime = 1.35;
-    collected.add(nearestDiscovery.id);
-    saveStorage(DISCOVERY_KEY, [...collected]);
-    nearestDiscovery.found = true;
-    nearestDiscovery.glow.material.color.setHex(0xa6c989);
-    nearestDiscovery.ring.material.color.setHex(0xa6c989);
-    updateProgress();
-    showToast(`✨ Kỷ niệm: ${nearestDiscovery.title}. ${nearestDiscovery.description}`);
+    if (nearestInteractable.kind === "forage") {
+        const item = nearestInteractable.item;
+        item.mesh.visible = false;
+        item.respawnAt = performance.now() / 1000 + 45;
+        campState.inventory[item.type] += 1;
+        const questCompleted = completeDailyQuest("gathered");
+        saveCampState();
+        updateCampUI();
+        showToast(questCompleted
+            ? `🌿 Hoàn thành nhiệm vụ ngày! Nhặt ${DAILY_GATHER_GOAL} vật phẩm, nhận 2 lá may mắn.`
+            : `${forageTypes[item.type].icon} Nhặt được ${forageTypes[item.type].label}!`);
+        return;
+    }
+
+    const discovery = nearestInteractable.discovery;
+    const wasNew = !collected.has(discovery.id);
+    if (wasNew) {
+        collected.add(discovery.id);
+        saveStorage(DISCOVERY_KEY, [...collected]);
+        discovery.found = true;
+        discovery.glow.material.color.setHex(0xa6c989);
+        discovery.ring.material.color.setHex(0xa6c989);
+        updateProgress();
+    }
+    const questCompleted = completeDailyQuest("visits");
+    showToast(questCompleted
+        ? `🌿 Hoàn thành nhiệm vụ ngày! Ghé thăm ${DAILY_VISIT_GOAL} danh lam, nhận 2 lá may mắn.`
+        : wasNew
+            ? `✨ Kỷ niệm: ${discovery.title}. ${discovery.description}`
+            : `🌿 Bạn lại ghé ${discovery.title}. Mỗi lần dừng chân đều là một kỷ niệm.`);
 }
 
 function updateDiscoveries(time) {
     nearestDiscovery = null;
+    nearestForage = null;
+    nearestInteractable = null;
     let nearestDistance = Infinity;
     for (const discovery of discoveries) {
         const distance = Math.hypot(localPos.x - discovery.x, localPos.z - discovery.z);
@@ -2482,19 +3261,41 @@ function updateDiscoveries(time) {
         discovery.glow.scale.setScalar(collected.has(discovery.id) ? 0.8 : 0.9 + Math.sin(time * 3 + discovery.z) * 0.13);
         discovery.ring.rotation.z = time * 0.24;
         discovery.found = collected.has(discovery.id);
-        if (!discovery.found && distance < nearestDistance) {
+        if (distance < nearestDistance) {
             nearestDistance = distance;
             nearestDiscovery = discovery;
+            nearestForage = null;
+            nearestInteractable = { kind: "discovery", discovery };
+        }
+    }
+    const now = performance.now() / 1000;
+    for (const item of forageItems) {
+        if (item.respawnAt && now >= item.respawnAt) {
+            item.respawnAt = 0;
+            item.mesh.visible = true;
+        }
+        if (!item.mesh.visible) continue;
+        item.mesh.position.y = item.baseY + 0.08 + Math.sin(time * 2.4 + item.x) * 0.06;
+        const distance = Math.hypot(localPos.x - item.x, localPos.z - item.z);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestForage = item;
+            nearestDiscovery = null;
+            nearestInteractable = { kind: "forage", item };
         }
     }
     const prompt = document.getElementById("interaction-prompt");
-    if (!nearestDiscovery || nearestDistance > 3.6) {
+    if (!nearestInteractable || nearestDistance > 3.6) {
+        nearestInteractable = null;
         nearestDiscovery = null;
+        nearestForage = null;
         prompt?.classList.remove("visible");
         return;
     }
     if (prompt) {
-        prompt.innerHTML = `Nhấn <kbd>E</kbd> để ngắm cảnh <strong>${nearestDiscovery.title}</strong>`;
+        prompt.innerHTML = nearestInteractable.kind === "forage"
+            ? `Nhấn <kbd>E</kbd> để nhặt <strong>${forageTypes[nearestForage.type].label}</strong>`
+            : `Nhấn <kbd>E</kbd> để ghé thăm <strong>${nearestDiscovery.title}</strong>`;
         prompt.classList.add("visible");
     }
 }
@@ -2568,6 +3369,15 @@ genderButtons.forEach(button => button.addEventListener("click", () => {
 
 document.getElementById("creator-form")?.addEventListener("submit", async event => {
     event.preventDefault();
+    if (screen.orientation && typeof screen.orientation.lock === "function") {
+        try {
+            screen.orientation.lock("landscape").catch(error => {
+                console.info("Không thể khóa hướng màn hình; vẫn có thể xoay thiết bị thủ công.", error);
+            });
+        } catch (error) {
+            console.info("Không thể khóa hướng màn hình; vẫn có thể xoay thiết bị thủ công.", error);
+        }
+    }
     const nextCharacter = {
         name: nameInput?.value.trim().slice(0, 18) || defaultCharacter.name,
         color: selectedColor,
@@ -2592,7 +3402,7 @@ document.getElementById("creator-form")?.addEventListener("submit", async event 
         controls.update();
 
         const playerLabel = document.getElementById("player-label");
-        if (playerLabel) playerLabel.textContent = `${charName} · WASD: Di chuyển · E: Tương tác · K: Ngồi · P: Chụp ảnh`;
+        if (playerLabel) playerLabel.textContent = `${charName} · WASD: Di chuyển · E: Tương tác · I: Ba lô · K: Ngồi · P: Chụp ảnh`;
 
         gameStarted = true;
         releaseKeys();
@@ -2745,8 +3555,8 @@ function updateRemotePlayers(players, currentUserId) {
         const color = typeof data.color === "string" && /^#[\da-f]{6}$/i.test(data.color) ? data.color : defaultCharacter.color;
         const style = ["hiker", "spirit", "stargazer"].includes(data.style) ? data.style : "hiker";
         const gender = data.gender === "male" ? "male" : "female";
-        const x = Number.isFinite(data.x) ? THREE.MathUtils.clamp(data.x, -88, 88) : 5;
-        const z = Number.isFinite(data.z) ? THREE.MathUtils.clamp(data.z, -88, 88) : 5;
+        const x = Number.isFinite(data.x) ? THREE.MathUtils.clamp(data.x, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT) : 5;
+        const z = Number.isFinite(data.z) ? THREE.MathUtils.clamp(data.z, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT) : 5;
         const rotation = Number.isFinite(data.rotation) ? data.rotation : 0;
         const sitting = data.sitting === true;
         if (!name) continue;
@@ -2841,29 +3651,74 @@ setInterval(() => {
     });
 }, 100);
 
-// Mobile Touch Controls
-[...document.querySelectorAll("#touch-controls button")].forEach(button => {
-    const key = button.dataset.key;
-    const release = event => { event.preventDefault(); keys[key] = false; };
-    button.addEventListener("pointerdown", event => {
-        event.preventDefault();
-        keys[key] = true;
-        if (isSitting) isSitting = false;
-        button.setPointerCapture(event.pointerId);
-    });
-    button.addEventListener("pointerup", release);
-    button.addEventListener("pointercancel", release);
-    button.addEventListener("lostpointercapture", release);
-});
-document.getElementById("touch-interact")?.addEventListener("pointerdown", event => {
+// Mobile MOBA-style controls
+const joystick = document.getElementById("move-joystick");
+const joystickKnob = document.getElementById("joystick-knob");
+const touchAxes = { x: 0, y: 0 };
+let joystickPointerId = null;
+
+function updateJoystick(event) {
+    if (!joystick || !joystickKnob) return;
+    const bounds = joystick.getBoundingClientRect();
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+    const maxDistance = bounds.width * 0.34;
+    const deltaX = event.clientX - centerX;
+    const deltaY = event.clientY - centerY;
+    const distance = Math.hypot(deltaX, deltaY);
+    const scale = distance > maxDistance ? maxDistance / distance : 1;
+    const offsetX = deltaX * scale;
+    const offsetY = deltaY * scale;
+    const deadZone = maxDistance * 0.12;
+    const activeDistance = Math.max(0, Math.hypot(offsetX, offsetY) - deadZone);
+    const strength = activeDistance / (maxDistance - deadZone);
+    touchAxes.x = distance > deadZone ? offsetX / Math.hypot(offsetX, offsetY) * strength : 0;
+    touchAxes.y = distance > deadZone ? offsetY / Math.hypot(offsetX, offsetY) * strength : 0;
+    joystickKnob.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+    if (isSitting && strength > 0) isSitting = false;
+}
+
+function releaseJoystick(event) {
+    if (joystickPointerId !== event.pointerId) return;
+    joystickPointerId = null;
+    touchAxes.x = 0;
+    touchAxes.y = 0;
+    if (joystickKnob) joystickKnob.style.transform = "";
+}
+
+joystick?.addEventListener("pointerdown", event => {
     event.preventDefault();
+    if (joystickPointerId !== null) return;
+    joystickPointerId = event.pointerId;
+    joystick.setPointerCapture(event.pointerId);
+    updateJoystick(event);
+});
+joystick?.addEventListener("pointermove", event => {
+    if (joystickPointerId === event.pointerId) updateJoystick(event);
+});
+joystick?.addEventListener("pointerup", releaseJoystick);
+joystick?.addEventListener("pointercancel", releaseJoystick);
+joystick?.addEventListener("lostpointercapture", releaseJoystick);
+
+document.getElementById("touch-interact")?.addEventListener("click", () => {
     interact();
+});
+document.getElementById("touch-sit")?.addEventListener("click", () => {
+    isSitting = !isSitting;
+    showToast(isSitting ? "🧘 Đang ngồi nghỉ ngơi ngắm cảnh..." : "Đã đứng dậy.");
+});
+document.getElementById("touch-time")?.addEventListener("click", () => {
+    document.getElementById("btn-time")?.click();
+});
+document.getElementById("touch-photo")?.addEventListener("click", () => {
+    togglePhotoMode(true);
 });
 
 // ============================================================================
 // MAIN ANIMATION LOOP
 // ============================================================================
 const clock = new THREE.Clock();
+let hungerClock = 0;
 
 function animate() {
     requestAnimationFrame(animate);
@@ -2872,9 +3727,9 @@ function animate() {
     let moving = false;
 
     // Di chuyển nhân vật
-    if (localPlayerMesh && gameStarted && document.activeElement !== chatInput) {
-        const inputX = Number(keys.d || keys.ArrowRight) - Number(keys.a || keys.ArrowLeft);
-        const inputForward = Number(keys.w || keys.ArrowUp) - Number(keys.s || keys.ArrowDown);
+    if (localPlayerMesh && gameStarted && document.activeElement !== chatInput && document.getElementById("backpack-modal").hidden) {
+        const inputX = Number(keys.d || keys.ArrowRight) - Number(keys.a || keys.ArrowLeft) + touchAxes.x;
+        const inputForward = Number(keys.w || keys.ArrowUp) - Number(keys.s || keys.ArrowDown) - touchAxes.y;
         const cameraForward = new THREE.Vector3(
             controls.target.x - camera.position.x,
             0,
@@ -2890,9 +3745,9 @@ function animate() {
             moving = true;
             moveX /= length;
             moveZ /= length;
-            const speed = 5.6 * delta;
-            const nextX = THREE.MathUtils.clamp(localPos.x + moveX * speed, -88, 88);
-            const nextZ = THREE.MathUtils.clamp(localPos.z + moveZ * speed, -88, 88);
+            const speed = 5.6 * delta * Math.min(length, 1) * (campState.hunger <= 0 ? 0.7 : 1);
+            const nextX = THREE.MathUtils.clamp(localPos.x + moveX * speed, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT);
+            const nextZ = THREE.MathUtils.clamp(localPos.z + moveZ * speed, -WORLD_PLAYER_LIMIT, WORLD_PLAYER_LIMIT);
             if (canMoveToForestPosition(nextX, nextZ)) {
                 localPos.x = nextX;
                 localPos.z = nextZ;
@@ -2941,6 +3796,15 @@ function animate() {
 
     animateCharacter(delta, time, moving);
     updateFootstepDust(delta);
+    if (moving && campState.hunger > 0) {
+        hungerClock += delta;
+        if (hungerClock >= 25) {
+            hungerClock %= 25;
+            campState.hunger = Math.max(0, campState.hunger - 1);
+            saveCampState();
+            updateCampUI();
+        }
+    }
 
     // Cánh hoa anh đào rơi trong gió (Sakura Drift)
     if (sakuraMesh) {
@@ -2953,8 +3817,8 @@ function animate() {
 
             if (s.y < terrainHeight(s.x, s.z)) {
                 s.y = 28 + Math.random() * 8;
-                s.x = localPos.x + (Math.random() - 0.5) * 120;
-                s.z = localPos.z + (Math.random() - 0.5) * 120;
+                s.x = localPos.x + (Math.random() - 0.5) * WORLD_HALF_SIZE * 2.2;
+                s.z = localPos.z + (Math.random() - 0.5) * WORLD_HALF_SIZE * 2.2;
             }
 
             dummy.position.set(s.x, s.y, s.z);
@@ -2991,6 +3855,7 @@ function animate() {
 
     // Hiệu ứng lửa trại
     for (const particle of fireParticles) {
+        if (!particle.fire.flame.visible) continue;
         particle.mesh.position.y += particle.speed * (isRaining ? 0.7 : 1);
         particle.mesh.rotation.y += 0.04;
         particle.mesh.material.opacity = Math.max(0, 1 - particle.mesh.position.y / particle.maxH);
@@ -2998,14 +3863,35 @@ function animate() {
             particle.mesh.position.set((Math.random() - 0.5) * 0.7, 0, (Math.random() - 0.5) * 0.7);
         }
     }
-    campfire.flame.scale.y = 0.9 + Math.sin(time * 12) * 0.08;
-    campfire.light.intensity = (currentTimeMode === "night" ? 3.4 : 2.2) + Math.sin(time * 9) * 0.35;
+    for (const fire of campfireSites) {
+        const lit = fire.base || fire.fuelUntil > Date.now();
+        if (fire.lit !== lit) setFireLit(fire, lit);
+        if (lit) {
+            fire.flame.scale.y = 0.9 + Math.sin(time * 12 + fire.x) * 0.08;
+            fire.light.intensity = (currentTimeMode === "night" ? 3.4 : 2.2) + Math.sin(time * 9 + fire.z) * 0.35;
+        }
+    }
+    updateCookingJobs(Date.now());
+    if (!document.getElementById("backpack-modal").hidden) {
+        updateBackpackLocation();
+        for (const button of document.querySelectorAll("#backpack-items button[data-item]")) {
+            button.disabled = !canUseBackpackItem(button.dataset.item);
+        }
+    }
 
     // Gợn sóng hồ nước
     for (const ripple of pondRipples) {
         const pulse = (Math.sin(time * 1.4 + ripple.phase) + 1) / 2;
         ripple.mesh.scale.setScalar(0.7 + pulse * 1.1);
         ripple.mesh.material.opacity = 0.08 + pulse * 0.22;
+    }
+    for (const highlight of riverHighlights) {
+        const progress = (highlight.progress + time * highlight.speed) % 1;
+        const point = highlight.curve.getPointAt(progress);
+        const tangent = highlight.curve.getTangentAt(progress);
+        highlight.mesh.position.set(point.x, baseTerrainHeight(point.x, point.z) - 0.12, point.z);
+        highlight.mesh.rotation.y = -Math.atan2(tangent.z, tangent.x);
+        highlight.mesh.material.opacity = 0.28 + (Math.sin(time * 2.4 + highlight.progress * Math.PI * 2) + 1) * 0.16;
     }
 
     // Hạt mưa
